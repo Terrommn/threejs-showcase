@@ -121,10 +121,10 @@
       bottom: 32px; left: 32px;
       max-width: 400px;
       padding: 24px 28px;
-      background: rgba(255,255,255,0.03);
+      background: rgba(30,30,30,0.85);
       backdrop-filter: blur(24px);
       -webkit-backdrop-filter: blur(24px);
-      border: 1px solid rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
       border-radius: 16px;
       z-index: 50;
       opacity: 0;
@@ -841,271 +841,247 @@
     }
 
     // ============================================================
-    //  DEMO 6 — HAND TRACKING (RASENGAN)
+    //  DEMO 6 — RASENGAN
     // ============================================================
     function createHandDemo() {
       const scene = new THREE.Scene();
       scene.background = null;
-
       const aspect = innerWidth / innerHeight;
       const cam = new THREE.OrthographicCamera(-aspect, aspect, 1, -1, 0.1, 100);
       cam.position.z = 10;
-
       const videoEl = document.getElementById('handVideo');
-      let handLandmarker = null;
-      let stream = null;
-      let active = false;
-      let results = null;
-      let lastDetect = 0;
+      let handLandmarker = null, stream = null, active = false, results = null, lastDetect = 0;
+      let smoothPalms = [{x:.5,y:.5},{x:.5,y:.5}], smoothOpen = [0,0], mergeFactor = 0;
+      const TIPS = [4,8,12,16,20];
 
-      // --- Smooth state ---
-      let smoothPalms = [{x:0.5,y:0.5},{x:0.5,y:0.5}];
-      let smoothOpen = [0, 0];
-      let mergeFactor = 0;
+      // --- Pre-computed random data ---
+      const coreD = Array.from({length:60},()=>({a:Math.random()*6.28,r:Math.pow(Math.random(),.5)*.22,s:(7+Math.random()*5)*(Math.random()<.3?-1:1),sz:2.5+Math.random()*2}));
+      const edgeD = Array.from({length:35},()=>({a:Math.random()*6.28,s:(1.5+Math.random()*2.5)*(Math.random()<.3?-1:1),r:.85+Math.random()*.2,sz:1+Math.random()*1.5}));
 
-      // --- Pre-computed rasengan orbits ---
-      const ORB_COUNT = 250;
-      const orbits = [];
-      for (let i = 0; i < ORB_COUNT; i++) {
-        const ring = i < 50 ? 0 : i < 120 ? 1 : i < 190 ? 2 : 3;
-        orbits.push({
-          angle: Math.random() * Math.PI * 2,
-          radius: [0.12, 0.38, 0.68, 1.0][ring] + (Math.random()-0.5)*0.12,
-          speed: [9, 5.5, 3.5, 2][ring] * (Math.random()<0.25 ? -1 : 1) + (Math.random()-0.5)*1.5,
-          size: [4, 2.8, 2, 1.4][ring] * (0.6 + Math.random()*0.8),
-          bright: ring === 0 ? 0.95 : 0.4 + Math.random()*0.5,
-          isCore: ring === 0
-        });
-      }
+      // --- Finger trail history ---
+      const TLEN = 22;
+      const fTrails = Array.from({length:10},()=>[]);
 
       // --- Particle buffer ---
-      const MAX_P = 3000;
-      const pPos = new Float32Array(MAX_P * 3);
-      const pCol = new Float32Array(MAX_P * 3);
-      const pSiz = new Float32Array(MAX_P);
-      const trails = [];
-
+      const MAX_P = 2500;
+      const pPos = new Float32Array(MAX_P*3), pCol = new Float32Array(MAX_P*3), pSiz = new Float32Array(MAX_P);
+      const sparks = [];
       const pGeo = new THREE.BufferGeometry();
-      pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
-      pGeo.setAttribute('color', new THREE.BufferAttribute(pCol, 3));
-      pGeo.setAttribute('aSize', new THREE.BufferAttribute(pSiz, 1));
-      pGeo.setDrawRange(0, 0);
-
+      pGeo.setAttribute('position',new THREE.BufferAttribute(pPos,3));
+      pGeo.setAttribute('color',new THREE.BufferAttribute(pCol,3));
+      pGeo.setAttribute('aSize',new THREE.BufferAttribute(pSiz,1));
+      pGeo.setDrawRange(0,0);
       const pMat = new THREE.ShaderMaterial({
-        transparent: true, depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        vertexShader: `
-          attribute float aSize;
-          attribute vec3 color;
-          varying vec3 vColor;
-          void main(){
-            vColor = color;
-            vec4 mv = modelViewMatrix * vec4(position,1.0);
-            gl_PointSize = aSize * (80.0 / -mv.z);
-            gl_Position = projectionMatrix * mv;
-          }`,
-        fragmentShader: `
-          varying vec3 vColor;
-          void main(){
-            float d = length(gl_PointCoord - 0.5);
-            if(d > 0.5) discard;
-            float a = 1.0 - smoothstep(0.0, 0.5, d);
-            gl_FragColor = vec4(vColor, a * 0.8);
-          }`
+        transparent:true, depthWrite:false, blending:THREE.AdditiveBlending,
+        vertexShader:`attribute float aSize;attribute vec3 color;varying vec3 vColor;
+          void main(){vColor=color;vec4 mv=modelViewMatrix*vec4(position,1.);
+          gl_PointSize=aSize*(80./-mv.z);gl_Position=projectionMatrix*mv;}`,
+        fragmentShader:`varying vec3 vColor;void main(){float d=length(gl_PointCoord-.5);
+          if(d>.5)discard;float a=1.-smoothstep(0.,.5,d);gl_FragColor=vec4(vColor,a*.85);}`
       });
-      scene.add(new THREE.Points(pGeo, pMat));
+      scene.add(new THREE.Points(pGeo,pMat));
+
+      // --- Finger trail lines ---
+      const tlMax = 500;
+      const tlPos = new Float32Array(tlMax*3), tlCol = new Float32Array(tlMax*3);
+      const tlGeo = new THREE.BufferGeometry();
+      tlGeo.setAttribute('position',new THREE.BufferAttribute(tlPos,3));
+      tlGeo.setAttribute('color',new THREE.BufferAttribute(tlCol,3));
+      tlGeo.setDrawRange(0,0);
+      scene.add(new THREE.LineSegments(tlGeo,new THREE.LineBasicMaterial({vertexColors:true,transparent:true,blending:THREE.AdditiveBlending})));
 
       // --- Helpers ---
-      function mapLM(lm) {
-        const vw = videoEl.videoWidth || 1280, vh = videoEl.videoHeight || 720;
-        const vidA = vw / vh, vpA = innerWidth / innerHeight;
-        let sx, sy, ox = 0, oy = 0;
-        if (vidA > vpA) { sy = 1; sx = vpA / vidA; ox = (1 - sx) / 2; }
-        else { sx = 1; sy = vidA / vpA; oy = (1 - sy) / 2; }
-        const vx = (lm.x - ox) / sx, vy = (lm.y - oy) / sy;
-        return { x: ((1 - vx) * 2 - 1) * vpA, y: 1 - 2 * vy };
+      function mapLM(lm){
+        const vw=videoEl.videoWidth||1280,vh=videoEl.videoHeight||720,vidA=vw/vh,vpA=innerWidth/innerHeight;
+        let sx,sy,ox=0,oy=0;
+        if(vidA>vpA){sy=1;sx=vpA/vidA;ox=(1-sx)/2;}else{sx=1;sy=vidA/vpA;oy=(1-sy)/2;}
+        return{x:((1-(lm.x-ox)/sx)*2-1)*vpA,y:1-2*((lm.y-oy)/sy)};
+      }
+      function palmCenter(h){let x=0,y=0;for(const i of[0,5,9,13,17]){x+=h[i].x;y+=h[i].y;}return{x:x/5,y:y/5};}
+      function handOpenness(h){const w=h[0];let d=0;for(const i of TIPS)d+=Math.hypot(h[i].x-w.x,h[i].y-w.y);return Math.min(Math.max((d/5-.06)/.17,0),1);}
+
+      const blueC=new THREE.Color(0x0066ff),purpleC=new THREE.Color(0x8833ff),orangeC=new THREE.Color(0xff8800);
+      const tmpC=new THREE.Color(),coreC=new THREE.Color(),glowC=new THREE.Color();
+      function rasColor(op){
+        if(op<.5)tmpC.copy(blueC).lerp(purpleC,op*2);else tmpC.copy(purpleC).lerp(orangeC,(op-.5)*2);
+        coreC.copy(tmpC).lerp(new THREE.Color(0xffffff),.75);
+        glowC.copy(tmpC).multiplyScalar(.3);
       }
 
-      function palmCenter(hand) {
-        let x = 0, y = 0;
-        for (const i of [0, 5, 9, 13, 17]) { x += hand[i].x; y += hand[i].y; }
-        return { x: x / 5, y: y / 5 };
-      }
+      // --- RASENGAN RENDERER ---
+      function writeRas(cx,cy,size,op,time,idx){
+        rasColor(op);
+        const pulse=1+Math.sin(time*7)*.04;
+        const sz=size*pulse;
 
-      function handOpenness(hand) {
-        const w = hand[0];
-        let d = 0;
-        for (const i of [4, 8, 12, 16, 20]) d += Math.hypot(hand[i].x-w.x, hand[i].y-w.y);
-        return Math.min(Math.max((d / 5 - 0.06) / 0.17, 0), 1);
-      }
-
-      const blueC = new THREE.Color(0x0066ff);
-      const purpleC = new THREE.Color(0x8833ff);
-      const orangeC = new THREE.Color(0xff8800);
-      const tmpC = new THREE.Color();
-      const coreC = new THREE.Color();
-
-      function rasenganColor(openness) {
-        if (openness < 0.5) tmpC.copy(blueC).lerp(purpleC, openness * 2);
-        else tmpC.copy(purpleC).lerp(orangeC, (openness - 0.5) * 2);
-        coreC.copy(tmpC).lerp(new THREE.Color(0xffffff), 0.7);
-      }
-
-      function writeRasengan(cx, cy, size, openness, time, idx) {
-        rasenganColor(openness);
-        const pulse = 1 + Math.sin(time * 6) * 0.06;
-        const sz = size * pulse;
-        for (let i = 0; i < ORB_COUNT && idx < MAX_P; i++) {
-          const o = orbits[i];
-          const r = o.radius * sz;
-          const a = o.angle + time * o.speed;
-          const i3 = idx * 3;
-          pPos[i3]   = cx + Math.cos(a) * r;
-          pPos[i3+1] = cy + Math.sin(a) * r;
-          pPos[i3+2] = Math.sin(a * 2 + o.angle) * sz * 0.12;
-          const c = o.isCore ? coreC : tmpC;
-          pCol[i3] = c.r; pCol[i3+1] = c.g; pCol[i3+2] = c.b;
-          pSiz[idx] = o.size * (0.5 + sz * 0.6) * o.bright * (0.75 + 0.25*Math.sin(time*8+o.angle));
-          idx++;
+        // 1) GLOW — 4 large soft particles
+        for(let i=0;i<4&&idx<MAX_P;i++){
+          const i3=idx*3;
+          pPos[i3]=cx+(Math.sin(i*1.57+time)*.01*sz);pPos[i3+1]=cy+(Math.cos(i*1.57+time)*.01*sz);pPos[i3+2]=-.05;
+          pCol[i3]=glowC.r;pCol[i3+1]=glowC.g;pCol[i3+2]=glowC.b;
+          pSiz[idx]=(28+i*8)*sz; idx++;
         }
-        // Emit trail particles
-        if (Math.random() < 0.6) {
-          const a = Math.random() * Math.PI * 2;
-          trails.push({
-            x: cx + Math.cos(a)*sz*0.9, y: cy + Math.sin(a)*sz*0.9, z: 0,
-            vx: Math.cos(a)*0.025, vy: Math.sin(a)*0.025, vz: (Math.random()-0.5)*0.008,
-            life: 0.6+Math.random()*0.3, r: tmpC.r, g: tmpC.g, b: tmpC.b,
-            size: Math.random()*4+1.5
-          });
+
+        // 2) CORE — 60 dense fast-spinning white-hot particles
+        for(let i=0;i<60&&idx<MAX_P;i++){
+          const c=coreD[i],a=c.a+time*c.s,r=c.r*sz;
+          const i3=idx*3;
+          pPos[i3]=cx+Math.cos(a)*r;pPos[i3+1]=cy+Math.sin(a)*r;pPos[i3+2]=Math.sin(a*2)*.03*sz;
+          pCol[i3]=coreC.r;pCol[i3+1]=coreC.g;pCol[i3+2]=coreC.b;
+          pSiz[idx]=c.sz*(.4+sz*.5); idx++;
+        }
+
+        // 3) SPIRAL BANDS — 5 arms × 80 particles = visible continuous swirls
+        const BANDS=5, PPB=80, TURNS=2.5, SPIN=8;
+        for(let b=0;b<BANDS;b++){
+          const bOff=b*6.28/BANDS;
+          for(let i=0;i<PPB&&idx<MAX_P;i++){
+            const t=i/PPB;
+            const r=t*sz;
+            const angle=bOff+t*TURNS*6.28+time*SPIN;
+            const wobble=Math.sin(t*12+time*4+b)*sz*.025;
+            const i3=idx*3;
+            pPos[i3]=cx+Math.cos(angle)*(r+wobble);
+            pPos[i3+1]=cy+Math.sin(angle)*(r+wobble);
+            pPos[i3+2]=Math.sin(angle*2+t*5)*sz*.06;
+            pCol[i3]=tmpC.r;pCol[i3+1]=tmpC.g;pCol[i3+2]=tmpC.b;
+            pSiz[idx]=(1.8+(1-t)*3)*(.3+sz*.55); idx++;
+          }
+        }
+
+        // 4) EDGE WISPS — 35 slow particles at the boundary
+        for(let i=0;i<35&&idx<MAX_P;i++){
+          const e=edgeD[i],a=e.a+time*e.s,r=e.r*sz;
+          const i3=idx*3;
+          pPos[i3]=cx+Math.cos(a)*r;pPos[i3+1]=cy+Math.sin(a)*r;pPos[i3+2]=0;
+          pCol[i3]=tmpC.r*.5;pCol[i3+1]=tmpC.g*.5;pCol[i3+2]=tmpC.b*.5;
+          pSiz[idx]=e.sz*(.3+sz*.4); idx++;
+        }
+
+        // 5) SPARKS flying off
+        if(Math.random()<.5){
+          const a=Math.random()*6.28;
+          sparks.push({x:cx+Math.cos(a)*sz*.95,y:cy+Math.sin(a)*sz*.95,z:0,
+            vx:Math.cos(a)*.025,vy:Math.sin(a)*.025,vz:0,
+            life:.5+Math.random()*.2,r:tmpC.r,g:tmpC.g,b:tmpC.b,size:2+Math.random()*3});
         }
         return idx;
       }
 
       // --- Start / Stop ---
-      async function start() {
-        active = true;
-        document.getElementById('handLoading').style.display = 'flex';
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
-          });
-          videoEl.srcObject = stream;
-          await videoEl.play();
-          videoEl.style.display = 'block';
-
-          if (!handLandmarker) {
-            const v = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
-            const resolver = await v.FilesetResolver.forVisionTasks(
-              'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
-            );
-            handLandmarker = await v.HandLandmarker.createFromOptions(resolver, {
-              baseOptions: {
-                modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task',
-                delegate: 'GPU'
-              },
-              runningMode: 'VIDEO',
-              numHands: 2
-            });
+      async function start(){
+        active=true;
+        document.getElementById('handLoading').style.display='flex';
+        try{
+          stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:1280},height:{ideal:720}}});
+          videoEl.srcObject=stream; await videoEl.play(); videoEl.style.display='block';
+          if(!handLandmarker){
+            const v=await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
+            const r2=await v.FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
+            handLandmarker=await v.HandLandmarker.createFromOptions(r2,{baseOptions:{modelAssetPath:'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task',delegate:'GPU'},runningMode:'VIDEO',numHands:2});
           }
-        } catch (err) {
-          console.error('Hand tracking init error:', err);
-        }
-        document.getElementById('handLoading').style.display = 'none';
+        }catch(e){console.error('Hand init error:',e);}
+        document.getElementById('handLoading').style.display='none';
+      }
+      function stop(){
+        active=false;
+        if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+        videoEl.style.display='none'; videoEl.srcObject=null;
+        results=null; sparks.length=0; fTrails.forEach(t=>t.length=0);
+        pGeo.setDrawRange(0,0); tlGeo.setDrawRange(0,0);
       }
 
-      function stop() {
-        active = false;
-        if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
-        videoEl.style.display = 'none';
-        videoEl.srcObject = null;
-        results = null;
-        trails.length = 0;
-        pGeo.setDrawRange(0, 0);
-      }
+      return{
+        scene,camera:cam,needsControls:false,start,stop,
+        update(t){
+          if(!active)return;
+          const now=performance.now();
+          if(handLandmarker&&videoEl.readyState>=2&&now-lastDetect>33){
+            lastDetect=now;try{results=handLandmarker.detectForVideo(videoEl,now);}catch(e){}
+          }
+          let idx=0;
+          const hands=results&&results.landmarks?results.landmarks:[];
 
-      return {
-        scene, camera: cam,
-        needsControls: false,
-        start, stop,
-        update(t) {
-          if (!active) return;
-
-          const now = performance.now();
-          if (handLandmarker && videoEl.readyState >= 2 && now - lastDetect > 33) {
-            lastDetect = now;
-            try { results = handLandmarker.detectForVideo(videoEl, now); } catch(e) {}
+          // --- Finger trail tracking ---
+          for(let h=0;h<2;h++){
+            for(let f=0;f<5;f++){
+              const trail=fTrails[h*5+f];
+              if(h<hands.length){
+                const p=mapLM(hands[h][TIPS[f]]);
+                trail.push(p);
+                if(trail.length>TLEN)trail.shift();
+              }else{
+                if(trail.length>0)trail.shift();
+              }
+            }
           }
 
-          let idx = 0;
-          const hands = results && results.landmarks ? results.landmarks : [];
+          // --- Render finger trail lines ---
+          let seg=0;
+          for(let ti=0;ti<10;ti++){
+            const trail=fTrails[ti];
+            const hIdx=Math.floor(ti/5);
+            const op=hIdx<hands.length?handOpenness(hands[hIdx]):0;
+            rasColor(op);
+            for(let i=1;i<trail.length&&seg*2<tlMax;i++){
+              const prev=trail[i-1],cur=trail[i];
+              const bright=i/trail.length;
+              const prevB=(i-1)/trail.length;
+              const s=seg*6;
+              tlPos[s]=prev.x;tlPos[s+1]=prev.y;tlPos[s+2]=.01;
+              tlPos[s+3]=cur.x;tlPos[s+4]=cur.y;tlPos[s+5]=.01;
+              tlCol[s]=tmpC.r*prevB*.7;tlCol[s+1]=tmpC.g*prevB*.7;tlCol[s+2]=tmpC.b*prevB*.7;
+              tlCol[s+3]=tmpC.r*bright*.7;tlCol[s+4]=tmpC.g*bright*.7;tlCol[s+5]=tmpC.b*bright*.7;
+              seg++;
+            }
+          }
+          tlGeo.setDrawRange(0,seg*2);
+          tlGeo.attributes.position.needsUpdate=true;
+          tlGeo.attributes.color.needsUpdate=true;
 
-          // Compute palm data
-          const palms = hands.map((h, i) => {
-            const raw = palmCenter(h);
-            smoothPalms[i].x += (raw.x - smoothPalms[i].x) * 0.25;
-            smoothPalms[i].y += (raw.y - smoothPalms[i].y) * 0.25;
-            const op = handOpenness(h);
-            smoothOpen[i] += (op - smoothOpen[i]) * 0.15;
-            const mapped = mapLM(smoothPalms[i]);
-            const size = 0.15 + smoothOpen[i] * 0.55;
-            return { cx: mapped.x, cy: mapped.y, open: smoothOpen[i], size };
+          // --- Palm data ---
+          const palms=hands.map((h,i)=>{
+            const raw=palmCenter(h);
+            smoothPalms[i].x+=(raw.x-smoothPalms[i].x)*.25;
+            smoothPalms[i].y+=(raw.y-smoothPalms[i].y)*.25;
+            const op=handOpenness(h);
+            smoothOpen[i]+=(op-smoothOpen[i])*.15;
+            const m=mapLM(smoothPalms[i]);
+            return{cx:m.x,cy:m.y,open:smoothOpen[i],size:.15+smoothOpen[i]*.55};
           });
 
-          // Merge logic
-          const targetMerge = (palms.length === 2 &&
-            Math.hypot(smoothPalms[0].x-smoothPalms[1].x, smoothPalms[0].y-smoothPalms[1].y) < 0.14) ? 1 : 0;
-          mergeFactor += (targetMerge - mergeFactor) * 0.08;
+          // --- Merge ---
+          const tgtM=(palms.length===2&&Math.hypot(smoothPalms[0].x-smoothPalms[1].x,smoothPalms[0].y-smoothPalms[1].y)<.14)?1:0;
+          mergeFactor+=(tgtM-mergeFactor)*.08;
 
-          if (mergeFactor > 0.3 && palms.length === 2) {
-            // Merged rasengan
-            const mcx = (palms[0].cx + palms[1].cx) / 2;
-            const mcy = (palms[0].cy + palms[1].cy) / 2;
-            const mOpen = Math.max(palms[0].open, palms[1].open);
-            const mSize = (palms[0].size + palms[1].size) * (0.8 + mergeFactor * 0.9);
-            idx = writeRasengan(mcx, mcy, mSize, mOpen, t, idx);
-
-            // Shrunk individual rasengans
-            const shrink = 1 - mergeFactor * 0.85;
-            for (const p of palms) {
-              idx = writeRasengan(p.cx, p.cy, p.size * shrink, p.open, t * 0.7, idx);
-            }
-          } else {
-            // Individual rasengans
-            for (const p of palms) {
-              idx = writeRasengan(p.cx, p.cy, p.size, p.open, t, idx);
-            }
+          if(mergeFactor>.3&&palms.length===2){
+            const mcx=(palms[0].cx+palms[1].cx)/2,mcy=(palms[0].cy+palms[1].cy)/2;
+            const mOp=Math.max(palms[0].open,palms[1].open);
+            const mSz=(palms[0].size+palms[1].size)*(.8+mergeFactor*.9);
+            idx=writeRas(mcx,mcy,mSz,mOp,t,idx);
+            const shrink=1-mergeFactor*.85;
+            for(const p of palms)idx=writeRas(p.cx,p.cy,p.size*shrink,p.open,t*.7,idx);
+          }else{
+            for(const p of palms)idx=writeRas(p.cx,p.cy,p.size,p.open,t,idx);
           }
 
-          // Update trail particles
-          let alive = 0;
-          for (let i = 0; i < trails.length; i++) {
-            const p = trails[i];
-            p.life -= 0.02;
-            if (p.life <= 0) continue;
-            p.x += p.vx; p.y += p.vy; p.z += p.vz;
-            p.vx *= 0.97; p.vy *= 0.97;
-            if (idx < MAX_P) {
-              const i3 = idx * 3;
-              pPos[i3]=p.x; pPos[i3+1]=p.y; pPos[i3+2]=p.z;
-              pCol[i3]=p.r; pCol[i3+1]=p.g; pCol[i3+2]=p.b;
-              pSiz[idx] = p.size * Math.min(p.life, 1);
-              idx++;
-            }
-            trails[alive] = p;
-            alive++;
+          // --- Spark trails ---
+          let alive=0;
+          for(let i=0;i<sparks.length;i++){
+            const p=sparks[i];p.life-=.02;if(p.life<=0)continue;
+            p.x+=p.vx;p.y+=p.vy;p.vx*=.96;p.vy*=.96;
+            if(idx<MAX_P){const i3=idx*3;pPos[i3]=p.x;pPos[i3+1]=p.y;pPos[i3+2]=p.z;
+              pCol[i3]=p.r;pCol[i3+1]=p.g;pCol[i3+2]=p.b;pSiz[idx]=p.size*Math.min(p.life,1);idx++;}
+            sparks[alive]=p;alive++;
           }
-          trails.length = alive;
+          sparks.length=alive;
 
-          pGeo.setDrawRange(0, idx);
-          pGeo.attributes.position.needsUpdate = true;
-          pGeo.attributes.color.needsUpdate = true;
-          pGeo.attributes.aSize.needsUpdate = true;
+          pGeo.setDrawRange(0,idx);
+          pGeo.attributes.position.needsUpdate=true;
+          pGeo.attributes.color.needsUpdate=true;
+          pGeo.attributes.aSize.needsUpdate=true;
         },
-        resize(w, h) {
-          const a = w / h;
-          cam.left = -a; cam.right = a;
-          cam.updateProjectionMatrix();
-        }
+        resize(w,h){const a=w/h;cam.left=-a;cam.right=a;cam.updateProjectionMatrix();}
       };
     }
 
