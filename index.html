@@ -313,7 +313,8 @@
     <button class="tab" data-demo="terrain"><span class="tab-num">03</span><span class="tab-full">Digital Terrain</span><span class="tab-short">Terrain</span></button>
     <button class="tab" data-demo="geometry"><span class="tab-num">04</span><span class="tab-full">Crystal Objects</span><span class="tab-short">Objects</span></button>
     <button class="tab" data-demo="shader"><span class="tab-num">05</span><span class="tab-full">Neon Flow</span><span class="tab-short">Flow</span></button>
-    <button class="tab" data-demo="hands"><span class="tab-num">06</span><span class="tab-full">Rasengan</span><span class="tab-short">Rasengan</span></button>
+    <button class="tab" data-demo="hands"><span class="tab-num">06</span><span class="tab-full">X-Ray Scanner</span><span class="tab-short">X-Ray</span></button>
+    <button class="tab" data-demo="neontips"><span class="tab-num">07</span><span class="tab-full">Noodle Stravaganza Pretty Colors Tips</span><span class="tab-short">Noodle</span></button>
   </nav>
 
   <video id="handVideo" autoplay playsinline muted></video>
@@ -381,10 +382,16 @@
         hint: 'Move your mouse to interact'
       },
       hands: {
-        title: 'Rasengan',
-        desc: 'Real-time hand tracking creates a spinning energy sphere on each palm. Open your hand to power up and change color. Bring both hands together to merge into one massive Rasengan.',
+        title: 'X-Ray Scanner',
+        desc: 'Use both hands to create a scanner window. Thumb and index finger of each hand form the four corners of an X-ray viewport that reveals edges and structures in real-time.',
         tag: 'Computer Vision',
-        hint: 'Open/close hand to change size & color \u2022 Two hands close = merge'
+        hint: 'Show both hands \u2022 Thumb + index = 4 corners of the scanner'
+      },
+      neontips: {
+        title: 'Noodle Stravaganza Pretty Colors Tips',
+        desc: 'Real-time hand tracking with pulsating neon glows on each fingertip. Purple, violet, and magenta hues breathe and trail as your fingers move.',
+        tag: 'Computer Vision',
+        hint: 'Show your hands to the camera'
       }
     };
 
@@ -841,7 +848,7 @@
     }
 
     // ============================================================
-    //  DEMO 6 — RASENGAN
+    //  DEMO 6 — X-RAY SCANNER
     // ============================================================
     function createHandDemo() {
       const scene = new THREE.Scene();
@@ -851,130 +858,91 @@
       cam.position.z = 10;
       const videoEl = document.getElementById('handVideo');
       let handLandmarker = null, stream = null, active = false, results = null, lastDetect = 0;
-      let smoothPalms = [{x:.5,y:.5},{x:.5,y:.5}], smoothOpen = [0,0], mergeFactor = 0;
-      const TIPS = [4,8,12,16,20];
 
-      // --- Pre-computed random data ---
-      const coreD = Array.from({length:90},()=>({a:Math.random()*6.28,r:Math.pow(Math.random(),.7)*.45,s:(4+Math.random()*4)*(Math.random()<.3?-1:1),sz:3.5+Math.random()*3}));
+      // --- VideoTexture ---
+      const videoTex = new THREE.VideoTexture(videoEl);
+      videoTex.minFilter = THREE.LinearFilter;
 
-      // --- Finger trail history ---
-      const TLEN = 22;
-      const fTrails = Array.from({length:10},()=>[]);
-
-      // --- Particle buffer ---
-      const MAX_P = 2500;
-      const pPos = new Float32Array(MAX_P*3), pCol = new Float32Array(MAX_P*3), pSiz = new Float32Array(MAX_P);
-      const sparks = [];
-      const pGeo = new THREE.BufferGeometry();
-      pGeo.setAttribute('position',new THREE.BufferAttribute(pPos,3));
-      pGeo.setAttribute('color',new THREE.BufferAttribute(pCol,3));
-      pGeo.setAttribute('aSize',new THREE.BufferAttribute(pSiz,1));
-      pGeo.setDrawRange(0,0);
-      const pMat = new THREE.ShaderMaterial({
-        transparent:true, depthWrite:false, blending:THREE.AdditiveBlending,
-        vertexShader:`attribute float aSize;attribute vec3 color;varying vec3 vColor;
-          void main(){vColor=color;vec4 mv=modelViewMatrix*vec4(position,1.);
-          gl_PointSize=aSize*(80./-mv.z);gl_Position=projectionMatrix*mv;}`,
-        fragmentShader:`varying vec3 vColor;void main(){float d=length(gl_PointCoord-.5);
-          if(d>.5)discard;float a=1.-smoothstep(0.,.5,d);gl_FragColor=vec4(vColor,a*.85);}`
-      });
-      scene.add(new THREE.Points(pGeo,pMat));
-
-      // --- Finger trail lines ---
-      const tlMax = 500;
-      const tlPos = new Float32Array(tlMax*3), tlCol = new Float32Array(tlMax*3);
-      const tlGeo = new THREE.BufferGeometry();
-      tlGeo.setAttribute('position',new THREE.BufferAttribute(tlPos,3));
-      tlGeo.setAttribute('color',new THREE.BufferAttribute(tlCol,3));
-      tlGeo.setDrawRange(0,0);
-      scene.add(new THREE.LineSegments(tlGeo,new THREE.LineBasicMaterial({vertexColors:true,transparent:true,blending:THREE.AdditiveBlending})));
-
-      // --- Helpers ---
-      function mapLM(lm){
-        const vw=videoEl.videoWidth||1280,vh=videoEl.videoHeight||720,vidA=vw/vh,vpA=innerWidth/innerHeight;
-        let sx,sy,ox=0,oy=0;
-        if(vidA>vpA){sy=1;sx=vpA/vidA;ox=(1-sx)/2;}else{sx=1;sy=vidA/vpA;oy=(1-sy)/2;}
-        return{x:((1-(lm.x-ox)/sx)*2-1)*vpA,y:1-2*((lm.y-oy)/sy)};
+      function mapLM(lm) {
+        const vw = videoEl.videoWidth || 1280, vh = videoEl.videoHeight || 720, vidA = vw / vh, vpA = innerWidth / innerHeight;
+        let sx, sy, ox = 0, oy = 0;
+        if (vidA > vpA) { sy = 1; sx = vpA / vidA; ox = (1 - sx) / 2; } else { sx = 1; sy = vidA / vpA; oy = (1 - sy) / 2; }
+        return { x: ((1 - (lm.x - ox) / sx) * 2 - 1) * vpA, y: 1 - 2 * ((lm.y - oy) / sy) };
       }
-      function palmCenter(h){let x=0,y=0;for(const i of[0,5,9,13,17]){x+=h[i].x;y+=h[i].y;}return{x:x/5,y:y/5};}
-      function handOpenness(h){const w=h[0];let d=0;for(const i of TIPS)d+=Math.hypot(h[i].x-w.x,h[i].y-w.y);return Math.min(Math.max((d/5-.06)/.17,0),1);}
-
-      const blueC=new THREE.Color(0x0066ff),purpleC=new THREE.Color(0x8833ff),orangeC=new THREE.Color(0xff8800);
-      const tmpC=new THREE.Color(),coreC=new THREE.Color(),glowC=new THREE.Color();
-      function rasColor(op){
-        if(op<.5)tmpC.copy(blueC).lerp(purpleC,op*2);else tmpC.copy(purpleC).lerp(orangeC,(op-.5)*2);
-        coreC.copy(tmpC).lerp(new THREE.Color(0xffffff),.75);
-        glowC.copy(tmpC).multiplyScalar(.3);
+      function videoCrop() {
+        const vw = videoEl.videoWidth || 1280, vh = videoEl.videoHeight || 720, vidA = vw / vh, vpA = innerWidth / innerHeight;
+        if (vidA > vpA) return { sx: vpA / vidA, sy: 1, ox: (1 - vpA / vidA) / 2, oy: 0 };
+        return { sx: 1, sy: vidA / vpA, ox: 0, oy: (1 - vidA / vpA) / 2 };
+      }
+      function sortQuad(pts) {
+        const cx = (pts[0].x+pts[1].x+pts[2].x+pts[3].x)/4, cy = (pts[0].y+pts[1].y+pts[2].y+pts[3].y)/4;
+        pts.sort((a,b) => Math.atan2(a.y-cy,a.x-cx) - Math.atan2(b.y-cy,b.x-cx));
+        return pts;
       }
 
-      // --- RASENGAN RENDERER ---
-      function writeRas(cx,cy,size,op,time,idx){
-        rasColor(op);
-        // Strong visible pulse — breathing
-        const pulse=1+Math.sin(time*2.8)*.14+Math.sin(time*7)*.04;
-        const sz=size*pulse;
-        // Organic drift — center wanders slightly
-        const dx=Math.sin(time*1.3)*.015*sz+Math.sin(time*3.7)*.008*sz;
-        const dy=Math.cos(time*1.7)*.015*sz+Math.cos(time*4.1)*.008*sz;
-        const ocx=cx+dx, ocy=cy+dy;
+      // --- X-Ray quad ---
+      const quadPos = new Float32Array(12);
+      const quadGeo = new THREE.BufferGeometry();
+      quadGeo.setAttribute('position', new THREE.BufferAttribute(quadPos, 3));
+      quadGeo.setIndex([0,1,2,0,2,3]);
+      const xU = {
+        uVideoTex:{value:videoTex}, uResolution:{value:new THREE.Vector2(innerWidth,innerHeight)},
+        uTime:{value:0}, uCrop:{value:new THREE.Vector4(1,1,0,0)}
+      };
+      const quadMesh = new THREE.Mesh(quadGeo, new THREE.ShaderMaterial({
+        uniforms:xU, side:THREE.DoubleSide, depthTest:false, depthWrite:false,
+        vertexShader:`void main(){gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
+        fragmentShader:`
+          uniform sampler2D uVideoTex;uniform vec2 uResolution;uniform float uTime;uniform vec4 uCrop;
+          float luma(vec3 c){return dot(c,vec3(.299,.587,.114));}
+          void main(){
+            vec2 uv=gl_FragCoord.xy/uResolution;
+            vec2 vid=vec2((1.-uv.x)*uCrop.x+uCrop.z,uv.y*uCrop.y+uCrop.w);
+            vec2 tx=1.5/uResolution;
+            float tl=luma(texture2D(uVideoTex,vid+vec2(-tx.x,tx.y)).rgb);
+            float tc=luma(texture2D(uVideoTex,vid+vec2(0,tx.y)).rgb);
+            float tr=luma(texture2D(uVideoTex,vid+vec2(tx.x,tx.y)).rgb);
+            float ml=luma(texture2D(uVideoTex,vid+vec2(-tx.x,0)).rgb);
+            float mr=luma(texture2D(uVideoTex,vid+vec2(tx.x,0)).rgb);
+            float bl=luma(texture2D(uVideoTex,vid+vec2(-tx.x,-tx.y)).rgb);
+            float bc=luma(texture2D(uVideoTex,vid+vec2(0,-tx.y)).rgb);
+            float br=luma(texture2D(uVideoTex,vid+vec2(tx.x,-tx.y)).rgb);
+            float gx=-tl-2.*ml-bl+tr+2.*mr+br,gy=-tl-2.*tc-tr+bl+2.*bc+br;
+            float edge=sqrt(gx*gx+gy*gy);
+            vec3 base=texture2D(uVideoTex,vid).rgb;float l=luma(base);
+            vec3 col=vec3(l*.1)+vec3(.08,.95,.8)*edge*2.5;
+            col*=.88+.12*sin(gl_FragCoord.y*2.5);
+            col+=vec3(.04,.18,.14)*(1.-smoothstep(0.,.025,abs(uv.y-fract(uTime*.2))));
+            col+=fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233))+uTime)*43758.5)*.04;
+            gl_FragColor=vec4(col,1.);}`
+      }));
+      quadMesh.visible=false; quadMesh.renderOrder=1; scene.add(quadMesh);
 
-        // 1) GLOW — big soft aura
-        for(let i=0;i<3&&idx<MAX_P;i++){
-          const i3=idx*3;
-          pPos[i3]=ocx;pPos[i3+1]=ocy;pPos[i3+2]=-.06;
-          pCol[i3]=glowC.r;pCol[i3+1]=glowC.g;pCol[i3+2]=glowC.b;
-          pSiz[idx]=(40+i*12)*sz; idx++;
-        }
+      // --- Border + glow ---
+      const bdrPos=new Float32Array(15),glwPos=new Float32Array(15);
+      const bdrGeo=new THREE.BufferGeometry();bdrGeo.setAttribute('position',new THREE.BufferAttribute(bdrPos,3));
+      const borderLine=new THREE.Line(bdrGeo,new THREE.LineBasicMaterial({color:0x00ffcc,transparent:true,opacity:.9,blending:THREE.AdditiveBlending,depthTest:false}));
+      borderLine.visible=false;borderLine.renderOrder=2;scene.add(borderLine);
+      const glwGeo=new THREE.BufferGeometry();glwGeo.setAttribute('position',new THREE.BufferAttribute(glwPos,3));
+      const glowLine=new THREE.Line(glwGeo,new THREE.LineBasicMaterial({color:0x00ffcc,transparent:true,opacity:.3,blending:THREE.AdditiveBlending,depthTest:false}));
+      glowLine.visible=false;glowLine.renderOrder=2;scene.add(glowLine);
 
-        // 2) CORE — 90 dense particles, BIG radius, fills the sphere solidly
-        for(let i=0;i<90&&idx<MAX_P;i++){
-          const c=coreD[i],a=c.a+time*c.s,r=c.r*sz;
-          const i3=idx*3;
-          pPos[i3]=ocx+Math.cos(a)*r;pPos[i3+1]=ocy+Math.sin(a)*r;pPos[i3+2]=Math.sin(a*2+c.a)*.04*sz;
-          // Mix core white with main color based on distance from center
-          const cMix=c.r/.45;
-          pCol[i3]=coreC.r*(1-cMix*.3)+tmpC.r*cMix*.3;
-          pCol[i3+1]=coreC.g*(1-cMix*.3)+tmpC.g*cMix*.3;
-          pCol[i3+2]=coreC.b*(1-cMix*.3)+tmpC.b*cMix*.3;
-          pSiz[idx]=c.sz*(.5+sz*.6); idx++;
-        }
-
-        // 3) SPIRAL BANDS — 3 arms, organic wobble, fewer but thicker
-        const BANDS=3,PPB=55,TURNS=2,SPIN=5;
-        for(let b=0;b<BANDS;b++){
-          const bOff=b*6.28/BANDS+Math.sin(time*.7+b)*0.3;
-          for(let i=0;i<PPB&&idx<MAX_P;i++){
-            const t=i/PPB;
-            const r=(.15+t*.85)*sz;
-            const angle=bOff+t*TURNS*6.28+time*SPIN;
-            const wobble=Math.sin(t*8+time*2.5+b*2)*.04*sz+Math.sin(t*15+time*5)*.015*sz;
-            const i3=idx*3;
-            pPos[i3]=ocx+Math.cos(angle)*(r+wobble);
-            pPos[i3+1]=ocy+Math.sin(angle)*(r+wobble);
-            pPos[i3+2]=Math.sin(angle*1.5+t*3)*sz*.05;
-            const fade=.5+.5*Math.sin(t*6+time*3+b);
-            pCol[i3]=tmpC.r*(.6+fade*.4);pCol[i3+1]=tmpC.g*(.6+fade*.4);pCol[i3+2]=tmpC.b*(.6+fade*.4);
-            pSiz[idx]=(2+(1-t)*2.5)*(.3+sz*.5); idx++;
-          }
-        }
-
-        // 4) Sparse edge sparks — just a few, not cluttery
-        if(Math.random()<.3){
-          const a=Math.random()*6.28;
-          sparks.push({x:ocx+Math.cos(a)*sz*.9,y:ocy+Math.sin(a)*sz*.9,z:0,
-            vx:Math.cos(a)*.02,vy:Math.sin(a)*.02,vz:0,
-            life:.4+Math.random()*.2,r:tmpC.r,g:tmpC.g,b:tmpC.b,size:1.5+Math.random()*2});
-        }
-        return idx;
-      }
+      // --- Corner dots ---
+      const cPos=new Float32Array(12),cGeo=new THREE.BufferGeometry();
+      cGeo.setAttribute('position',new THREE.BufferAttribute(cPos,3));cGeo.setDrawRange(0,0);
+      const cPts=new THREE.Points(cGeo,new THREE.ShaderMaterial({
+        transparent:true,depthWrite:false,depthTest:false,blending:THREE.AdditiveBlending,
+        vertexShader:`void main(){gl_PointSize=22.;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
+        fragmentShader:`void main(){float d=length(gl_PointCoord-.5);if(d>.5)discard;gl_FragColor=vec4(.1,1.,.85,(1.-smoothstep(0.,.5,d))*.9);}`
+      }));
+      cPts.renderOrder=3;scene.add(cPts);
 
       // --- Start / Stop ---
       async function start(){
-        active=true;
-        document.getElementById('handLoading').style.display='flex';
+        active=true;document.getElementById('handLoading').style.display='flex';
         try{
           stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:1280},height:{ideal:720}}});
-          videoEl.srcObject=stream; await videoEl.play(); videoEl.style.display='block';
+          videoEl.srcObject=stream;await videoEl.play();videoEl.style.display='block';
           if(!handLandmarker){
             const v=await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
             const r2=await v.FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
@@ -984,11 +952,9 @@
         document.getElementById('handLoading').style.display='none';
       }
       function stop(){
-        active=false;
-        if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
-        videoEl.style.display='none'; videoEl.srcObject=null;
-        results=null; sparks.length=0; fTrails.forEach(t=>t.length=0);
-        pGeo.setDrawRange(0,0); tlGeo.setDrawRange(0,0);
+        active=false;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+        videoEl.style.display='none';videoEl.srcObject=null;results=null;
+        quadMesh.visible=false;borderLine.visible=false;glowLine.visible=false;cGeo.setDrawRange(0,0);
       }
 
       return{
@@ -999,80 +965,244 @@
           if(handLandmarker&&videoEl.readyState>=2&&now-lastDetect>33){
             lastDetect=now;try{results=handLandmarker.detectForVideo(videoEl,now);}catch(e){}
           }
-          let idx=0;
+          const hands=results&&results.landmarks?results.landmarks:[];
+          const rawPts=[];
+          for(let h=0;h<hands.length&&h<2;h++){rawPts.push(mapLM(hands[h][4]));rawPts.push(mapLM(hands[h][8]));}
+
+          for(let i=0;i<rawPts.length&&i<4;i++){cPos[i*3]=rawPts[i].x;cPos[i*3+1]=rawPts[i].y;cPos[i*3+2]=.03;}
+          cGeo.setDrawRange(0,rawPts.length);cGeo.attributes.position.needsUpdate=true;
+
+          if(rawPts.length===4){
+            const s=sortQuad([...rawPts]);
+            for(let i=0;i<4;i++){quadPos[i*3]=s[i].x;quadPos[i*3+1]=s[i].y;quadPos[i*3+2]=0;}
+            quadGeo.attributes.position.needsUpdate=true;quadMesh.visible=true;
+            for(let i=0;i<4;i++){
+              bdrPos[i*3]=s[i].x;bdrPos[i*3+1]=s[i].y;bdrPos[i*3+2]=.02;
+              glwPos[i*3]=s[i].x;glwPos[i*3+1]=s[i].y;glwPos[i*3+2]=.015;
+            }
+            bdrPos[12]=s[0].x;bdrPos[13]=s[0].y;bdrPos[14]=.02;
+            glwPos[12]=s[0].x;glwPos[13]=s[0].y;glwPos[14]=.015;
+            bdrGeo.attributes.position.needsUpdate=true;glwGeo.attributes.position.needsUpdate=true;
+            borderLine.visible=true;glowLine.visible=true;
+            const cr=videoCrop();xU.uCrop.value.set(cr.sx,cr.sy,cr.ox,cr.oy);xU.uTime.value=t;
+          }else{quadMesh.visible=false;borderLine.visible=false;glowLine.visible=false;}
+        },
+        resize(w,h){const a=w/h;cam.left=-a;cam.right=a;cam.updateProjectionMatrix();xU.uResolution.value.set(w,h);}
+      };
+    }
+
+    // ============================================================
+    //  DEMO 7 — NEON TIPS
+    // ============================================================
+    function createNeonTipsDemo() {
+      const scene = new THREE.Scene();
+      scene.background = null;
+      const aspect = innerWidth / innerHeight;
+      const cam = new THREE.OrthographicCamera(-aspect, aspect, 1, -1, 0.1, 100);
+      cam.position.z = 10;
+      const videoEl = document.getElementById('handVideo');
+      let handLandmarker = null, stream = null, active = false, results = null, lastDetect = 0;
+      const TIPS = [4,8,12,16,20];
+
+      // Neon purple palette — each finger gets a unique hue
+      const fingerColors = [
+        new THREE.Color(0x8833ff), // purple
+        new THREE.Color(0xaa22ff), // violet
+        new THREE.Color(0xdd44ff), // magenta
+        new THREE.Color(0x6644ff), // indigo
+        new THREE.Color(0xff44dd), // pink-magenta
+        new THREE.Color(0x8833ff),
+        new THREE.Color(0xaa22ff),
+        new THREE.Color(0xdd44ff),
+        new THREE.Color(0x6644ff),
+        new THREE.Color(0xff44dd),
+      ];
+
+      // Trail history per fingertip (10 fingers max, 2 hands x 5)
+      const TLEN = 15;
+      const trails = Array.from({length:10}, () => []);
+
+      // Smoothed positions + velocity tracking
+      const smoothPos = Array.from({length:10}, () => ({x:0,y:0,active:false,prevX:0,prevY:0,speed:0}));
+
+      // Spark particles (velocity-based emission)
+      const sparks = [];
+
+      // Particle buffer
+      const MAX_P = 5000;
+      const pPos = new Float32Array(MAX_P*3);
+      const pCol = new Float32Array(MAX_P*3);
+      const pSiz = new Float32Array(MAX_P);
+      const pGeo = new THREE.BufferGeometry();
+      pGeo.setAttribute('position', new THREE.BufferAttribute(pPos,3));
+      pGeo.setAttribute('color', new THREE.BufferAttribute(pCol,3));
+      pGeo.setAttribute('aSize', new THREE.BufferAttribute(pSiz,1));
+      pGeo.setDrawRange(0,0);
+      const pMat = new THREE.ShaderMaterial({
+        transparent:true, depthWrite:false, blending:THREE.AdditiveBlending,
+        vertexShader:`attribute float aSize;attribute vec3 color;varying vec3 vColor;
+          void main(){vColor=color;vec4 mv=modelViewMatrix*vec4(position,1.);
+          gl_PointSize=aSize*(80./-mv.z);gl_Position=projectionMatrix*mv;}`,
+        fragmentShader:`varying vec3 vColor;void main(){float d=length(gl_PointCoord-.5);
+          if(d>.5)discard;float a=1.-smoothstep(.0,.5,d);a*=a;gl_FragColor=vec4(vColor,a*.9);}`
+      });
+      scene.add(new THREE.Points(pGeo,pMat));
+
+      function mapLM(lm){
+        const vw=videoEl.videoWidth||1280,vh=videoEl.videoHeight||720,vidA=vw/vh,vpA=innerWidth/innerHeight;
+        let sx,sy,ox=0,oy=0;
+        if(vidA>vpA){sy=1;sx=vpA/vidA;ox=(1-sx)/2;}else{sx=1;sy=vidA/vpA;oy=(1-sy)/2;}
+        return{x:((1-(lm.x-ox)/sx)*2-1)*vpA,y:1-2*((lm.y-oy)/sy)};
+      }
+
+      async function start(){
+        active=true;
+        document.getElementById('handLoading').style.display='flex';
+        try{
+          stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:1280},height:{ideal:720}}});
+          videoEl.srcObject=stream; await videoEl.play(); videoEl.style.display='block';
+          if(!handLandmarker){
+            const v=await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
+            const r2=await v.FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
+            handLandmarker=await v.HandLandmarker.createFromOptions(r2,{
+              baseOptions:{modelAssetPath:'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task',delegate:'GPU'},
+              runningMode:'VIDEO',numHands:2
+            });
+          }
+        }catch(e){console.error('NeonTips init error:',e);}
+        document.getElementById('handLoading').style.display='none';
+      }
+
+      function stop(){
+        active=false;
+        if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+        videoEl.style.display='none'; videoEl.srcObject=null;
+        results=null; trails.forEach(t=>t.length=0);
+        smoothPos.forEach(s=>{s.active=false;s.speed=0;});
+        sparks.length=0;
+        pGeo.setDrawRange(0,0);
+      }
+
+      return{
+        scene,camera:cam,needsControls:false,start,stop,
+        update(t){
+          if(!active)return;
+          const now=performance.now();
+          if(handLandmarker&&videoEl.readyState>=2&&now-lastDetect>33){
+            lastDetect=now;try{results=handLandmarker.detectForVideo(videoEl,now);}catch(e){}
+          }
           const hands=results&&results.landmarks?results.landmarks:[];
 
-          // --- Finger trail tracking ---
+          // Update trails & smooth positions
           for(let h=0;h<2;h++){
             for(let f=0;f<5;f++){
-              const trail=fTrails[h*5+f];
+              const fi=h*5+f;
+              const trail=trails[fi];
               if(h<hands.length){
-                const p=mapLM(hands[h][TIPS[f]]);
-                trail.push(p);
+                const raw=mapLM(hands[h][TIPS[f]]);
+                const sp=smoothPos[fi];
+                if(!sp.active){sp.x=raw.x;sp.y=raw.y;sp.prevX=raw.x;sp.prevY=raw.y;sp.active=true;}
+                sp.prevX=sp.x;sp.prevY=sp.y;
+                sp.x+=(raw.x-sp.x)*.35;
+                sp.y+=(raw.y-sp.y)*.35;
+                sp.speed=Math.hypot(sp.x-sp.prevX,sp.y-sp.prevY);
+                trail.push({x:sp.x,y:sp.y});
                 if(trail.length>TLEN)trail.shift();
+
+                // Emit sparks/flames based on speed
+                const spd=Math.min(sp.speed,0.15);
+                const emitCount=Math.floor(spd*180);
+                const col=fingerColors[fi];
+                for(let s=0;s<emitCount&&sparks.length<1500;s++){
+                  const angle=Math.random()*6.28;
+                  const force=.005+spd*(.15+Math.random()*.3);
+                  // Flame colors: mix finger color with orange/yellow for hot sparks
+                  const heat=Math.random();
+                  const r=col.r*(1-heat*.5)+heat*.9;
+                  const g=col.g*(1-heat*.7)+heat*.4;
+                  const b=col.b*(1-heat*.8)+heat*.05;
+                  sparks.push({
+                    x:sp.x,y:sp.y,
+                    vx:Math.cos(angle)*force+(sp.x-sp.prevX)*(.5+Math.random()),
+                    vy:Math.sin(angle)*force+(sp.y-sp.prevY)*(.5+Math.random())+.002,
+                    life:.3+Math.random()*.5,
+                    maxLife:.3+Math.random()*.5,
+                    r,g,b,
+                    size:1.5+Math.random()*4
+                  });
+                }
               }else{
+                smoothPos[fi].active=false;
+                smoothPos[fi].speed=0;
                 if(trail.length>0)trail.shift();
               }
             }
           }
 
-          // --- Render finger trail lines ---
-          let seg=0;
-          for(let ti=0;ti<10;ti++){
-            const trail=fTrails[ti];
-            const hIdx=Math.floor(ti/5);
-            const op=hIdx<hands.length?handOpenness(hands[hIdx]):0;
-            rasColor(op);
-            for(let i=1;i<trail.length&&seg*2<tlMax;i++){
-              const prev=trail[i-1],cur=trail[i];
-              const bright=i/trail.length;
-              const prevB=(i-1)/trail.length;
-              const s=seg*6;
-              tlPos[s]=prev.x;tlPos[s+1]=prev.y;tlPos[s+2]=.01;
-              tlPos[s+3]=cur.x;tlPos[s+4]=cur.y;tlPos[s+5]=.01;
-              tlCol[s]=tmpC.r*prevB*.7;tlCol[s+1]=tmpC.g*prevB*.7;tlCol[s+2]=tmpC.b*prevB*.7;
-              tlCol[s+3]=tmpC.r*bright*.7;tlCol[s+4]=tmpC.g*bright*.7;tlCol[s+5]=tmpC.b*bright*.7;
-              seg++;
+          let idx=0;
+          const tmpC=new THREE.Color();
+
+          for(let fi=0;fi<10;fi++){
+            const trail=trails[fi];
+            if(trail.length===0)continue;
+            const col=fingerColors[fi];
+            const tip=trail[trail.length-1];
+            const spd=smoothPos[fi].speed;
+            const speedBoost=1+Math.min(spd,0.12)*8;
+            const pulse=(1+0.3*Math.sin(t*3+fi*1.3)+0.1*Math.sin(t*7.5+fi*2.1))*speedBoost;
+
+            // --- Outer glow (3 layers, grows with speed) ---
+            for(let g=0;g<3&&idx<MAX_P;g++){
+              const i3=idx*3;
+              pPos[i3]=tip.x; pPos[i3+1]=tip.y; pPos[i3+2]=-.05;
+              tmpC.copy(col).multiplyScalar(.25+g*.05);
+              pCol[i3]=tmpC.r; pCol[i3+1]=tmpC.g; pCol[i3+2]=tmpC.b;
+              pSiz[idx]=(28-g*6)*pulse;
+              idx++;
+            }
+
+            // --- Bright core ---
+            if(idx<MAX_P){
+              const i3=idx*3;
+              pPos[i3]=tip.x; pPos[i3+1]=tip.y; pPos[i3+2]=0;
+              tmpC.copy(col).lerp(new THREE.Color(0xffffff),.7);
+              pCol[i3]=tmpC.r; pCol[i3+1]=tmpC.g; pCol[i3+2]=tmpC.b;
+              pSiz[idx]=6*pulse;
+              idx++;
+            }
+
+            // --- Trail particles ---
+            for(let i=0;i<trail.length-1&&idx<MAX_P;i++){
+              const pt=trail[i];
+              const fade=(i+1)/trail.length;
+              const trailPulse=1+0.15*Math.sin(t*4+fi+i*.5);
+              const i3=idx*3;
+              pPos[i3]=pt.x; pPos[i3+1]=pt.y; pPos[i3+2]=-.02;
+              tmpC.copy(col).multiplyScalar(fade*.6);
+              pCol[i3]=tmpC.r; pCol[i3+1]=tmpC.g; pCol[i3+2]=tmpC.b;
+              pSiz[idx]=(3+fade*8)*trailPulse;
+              idx++;
             }
           }
-          tlGeo.setDrawRange(0,seg*2);
-          tlGeo.attributes.position.needsUpdate=true;
-          tlGeo.attributes.color.needsUpdate=true;
 
-          // --- Palm data ---
-          const palms=hands.map((h,i)=>{
-            const raw=palmCenter(h);
-            smoothPalms[i].x+=(raw.x-smoothPalms[i].x)*.25;
-            smoothPalms[i].y+=(raw.y-smoothPalms[i].y)*.25;
-            const op=handOpenness(h);
-            smoothOpen[i]+=(op-smoothOpen[i])*.15;
-            const m=mapLM(smoothPalms[i]);
-            return{cx:m.x,cy:m.y,open:smoothOpen[i],size:.3+smoothOpen[i]*.8};
-          });
-
-          // --- Merge ---
-          const tgtM=(palms.length===2&&Math.hypot(smoothPalms[0].x-smoothPalms[1].x,smoothPalms[0].y-smoothPalms[1].y)<.14)?1:0;
-          mergeFactor+=(tgtM-mergeFactor)*.08;
-
-          if(mergeFactor>.3&&palms.length===2){
-            const mcx=(palms[0].cx+palms[1].cx)/2,mcy=(palms[0].cy+palms[1].cy)/2;
-            const mOp=Math.max(palms[0].open,palms[1].open);
-            const mSz=(palms[0].size+palms[1].size)*(.8+mergeFactor*.9);
-            idx=writeRas(mcx,mcy,mSz,mOp,t,idx);
-            const shrink=1-mergeFactor*.85;
-            for(const p of palms)idx=writeRas(p.cx,p.cy,p.size*shrink,p.open,t*.7,idx);
-          }else{
-            for(const p of palms)idx=writeRas(p.cx,p.cy,p.size,p.open,t,idx);
-          }
-
-          // --- Spark trails ---
+          // --- Render & update sparks ---
           let alive=0;
           for(let i=0;i<sparks.length;i++){
-            const p=sparks[i];p.life-=.02;if(p.life<=0)continue;
-            p.x+=p.vx;p.y+=p.vy;p.vx*=.96;p.vy*=.96;
-            if(idx<MAX_P){const i3=idx*3;pPos[i3]=p.x;pPos[i3+1]=p.y;pPos[i3+2]=p.z;
-              pCol[i3]=p.r;pCol[i3+1]=p.g;pCol[i3+2]=p.b;pSiz[idx]=p.size*Math.min(p.life,1);idx++;}
-            sparks[alive]=p;alive++;
+            const s=sparks[i];
+            s.life-=.018;
+            if(s.life<=0)continue;
+            s.x+=s.vx; s.y+=s.vy;
+            s.vy+=.0003; // slight gravity
+            s.vx*=.97; s.vy*=.97;
+            if(idx<MAX_P){
+              const lifeRatio=s.life/s.maxLife;
+              const i3=idx*3;
+              pPos[i3]=s.x; pPos[i3+1]=s.y; pPos[i3+2]=-.01;
+              pCol[i3]=s.r*lifeRatio; pCol[i3+1]=s.g*lifeRatio; pCol[i3+2]=s.b*lifeRatio;
+              pSiz[idx]=s.size*lifeRatio;
+              idx++;
+            }
+            sparks[alive]=s; alive++;
           }
           sparks.length=alive;
 
@@ -1105,8 +1235,8 @@
     function switchDemo(name) {
       if (name === currentName) return;
 
-      // Stop camera when leaving hands
-      if (currentName === 'hands' && currentDemo && currentDemo.stop) currentDemo.stop();
+      // Stop camera when leaving hands/neontips
+      if ((currentName === 'hands' || currentName === 'neontips') && currentDemo && currentDemo.stop) currentDemo.stop();
 
       // Fade out
       canvas.style.opacity = '0';
@@ -1143,8 +1273,8 @@
           btn.classList.toggle('active', btn.dataset.demo === name);
         });
 
-        // Start camera when entering hands
-        if (name === 'hands' && currentDemo.start) currentDemo.start();
+        // Start camera when entering hands/neontips
+        if ((name === 'hands' || name === 'neontips') && currentDemo.start) currentDemo.start();
 
         // Fade in
         canvas.style.opacity = '1';
@@ -1200,8 +1330,8 @@
 
     // Keyboard navigation
     document.addEventListener('keydown', e => {
-      const keys = ['1','2','3','4','5','6'];
-      const names = ['particles','blob','terrain','geometry','shader','hands'];
+      const keys = ['1','2','3','4','5','6','7'];
+      const names = ['particles','blob','terrain','geometry','shader','hands','neontips'];
       const idx = keys.indexOf(e.key);
       if (idx !== -1) switchDemo(names[idx]);
     });
@@ -1215,6 +1345,7 @@
     demos.geometry  = createGeometry();
     demos.shader    = createShader();
     demos.hands     = createHandDemo();
+    demos.neontips  = createNeonTipsDemo();
 
     currentDemo = demos.particles;
     updateInfoCard('particles');
