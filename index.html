@@ -260,6 +260,42 @@
       .tab-num { font-size: 10px; }
       .tab { padding: 8px 2px 6px; }
     }
+
+    /* ===== HAND TRACKING ===== */
+    #handVideo {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+      z-index: 0;
+      display: none;
+    }
+
+    .hand-loading {
+      position: fixed;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 90;
+      background: rgba(6,6,15,0.85);
+      gap: 16px;
+    }
+    .hand-loading p {
+      color: rgba(255,255,255,0.6);
+      font-size: 14px;
+      font-weight: 400;
+    }
+    .hand-loading .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid rgba(255,255,255,0.08);
+      border-top-color: #6366f1;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
@@ -277,9 +313,16 @@
     <button class="tab" data-demo="terrain"><span class="tab-num">03</span><span class="tab-full">Digital Terrain</span><span class="tab-short">Terrain</span></button>
     <button class="tab" data-demo="geometry"><span class="tab-num">04</span><span class="tab-full">Crystal Objects</span><span class="tab-short">Objects</span></button>
     <button class="tab" data-demo="shader"><span class="tab-num">05</span><span class="tab-full">Neon Flow</span><span class="tab-short">Flow</span></button>
+    <button class="tab" data-demo="hands"><span class="tab-num">06</span><span class="tab-full">Hand Tracking</span><span class="tab-short">Hands</span></button>
   </nav>
 
+  <video id="handVideo" autoplay playsinline muted></video>
   <canvas id="canvas"></canvas>
+
+  <div class="hand-loading" id="handLoading">
+    <div class="spinner"></div>
+    <p>Initializing hand tracking...</p>
+  </div>
 
   <div class="info-card" id="infoCard">
     <span class="tag" id="infoTag"></span>
@@ -336,6 +379,12 @@
         desc: 'GPU-accelerated generative art built entirely in a GLSL fragment shader, producing flowing luminous curves that react to the cursor.',
         tag: 'Fragment Shaders',
         hint: 'Move your mouse to interact'
+      },
+      hands: {
+        title: 'Hand Tracking',
+        desc: 'Real-time hand detection powered by MediaPipe with particle effects that follow your fingertips. Pinch to create bursts of light.',
+        tag: 'Computer Vision',
+        hint: 'Allow camera access \u2022 Move your hands \u2022 Pinch to burst'
       }
     };
 
@@ -396,7 +445,7 @@
     //  GLOBALS
     // ============================================================
     const canvas = document.getElementById('canvas');
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
 
@@ -792,6 +841,247 @@
     }
 
     // ============================================================
+    //  DEMO 6 — HAND TRACKING
+    // ============================================================
+    function createHandDemo() {
+      const scene = new THREE.Scene();
+      scene.background = null; // transparent — video shows through
+
+      const aspect = innerWidth / innerHeight;
+      const cam = new THREE.OrthographicCamera(-aspect, aspect, 1, -1, 0.1, 100);
+      cam.position.z = 10;
+
+      const videoEl = document.getElementById('handVideo');
+      let handLandmarker = null;
+      let stream = null;
+      let active = false;
+      let results = null;
+      let lastDetect = 0;
+
+      const TIPS = [4, 8, 12, 16, 20];
+      const FCOL = [
+        new THREE.Color('#ffaa33'),
+        new THREE.Color('#4499ff'),
+        new THREE.Color('#aa55ff'),
+        new THREE.Color('#33ffaa'),
+        new THREE.Color('#ff55aa')
+      ];
+      const CONNS = [
+        [0,1],[1,2],[2,3],[3,4],
+        [0,5],[5,6],[6,7],[7,8],
+        [5,9],[9,10],[10,11],[11,12],
+        [9,13],[13,14],[14,15],[15,16],
+        [13,17],[17,18],[18,19],[19,20],
+        [0,17]
+      ];
+
+      // --- Particle pool ---
+      const MAX_P = 5000;
+      const pPos = new Float32Array(MAX_P * 3);
+      const pCol = new Float32Array(MAX_P * 3);
+      const pSiz = new Float32Array(MAX_P);
+      const pool = [];
+
+      const pGeo = new THREE.BufferGeometry();
+      pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+      pGeo.setAttribute('color', new THREE.BufferAttribute(pCol, 3));
+      pGeo.setAttribute('aSize', new THREE.BufferAttribute(pSiz, 1));
+      pGeo.setDrawRange(0, 0);
+
+      const pMat = new THREE.ShaderMaterial({
+        transparent: true, depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        vertexShader: `
+          attribute float aSize;
+          attribute vec3 color;
+          varying vec3 vColor;
+          void main(){
+            vColor = color;
+            vec4 mv = modelViewMatrix * vec4(position,1.0);
+            gl_PointSize = aSize * (80.0 / -mv.z);
+            gl_Position = projectionMatrix * mv;
+          }`,
+        fragmentShader: `
+          varying vec3 vColor;
+          void main(){
+            float d = length(gl_PointCoord - 0.5);
+            if(d > 0.5) discard;
+            float a = 1.0 - smoothstep(0.0, 0.5, d);
+            gl_FragColor = vec4(vColor, a * 0.75);
+          }`
+      });
+      scene.add(new THREE.Points(pGeo, pMat));
+
+      // --- Glow dots at fingertips ---
+      const glowPos = new Float32Array(10 * 3);
+      const glowCol = new Float32Array(10 * 3);
+      const glowSiz = new Float32Array(10);
+      const glowGeo = new THREE.BufferGeometry();
+      glowGeo.setAttribute('position', new THREE.BufferAttribute(glowPos, 3));
+      glowGeo.setAttribute('color', new THREE.BufferAttribute(glowCol, 3));
+      glowGeo.setAttribute('aSize', new THREE.BufferAttribute(glowSiz, 1));
+      glowGeo.setDrawRange(0, 0);
+      scene.add(new THREE.Points(glowGeo, pMat));
+
+      // --- Skeleton lines ---
+      const skelPos = new Float32Array(CONNS.length * 2 * 3 * 2);
+      const skelGeo = new THREE.BufferGeometry();
+      skelGeo.setAttribute('position', new THREE.BufferAttribute(skelPos, 3));
+      skelGeo.setDrawRange(0, 0);
+      scene.add(new THREE.LineSegments(skelGeo,
+        new THREE.LineBasicMaterial({ color: 0x6366f1, transparent: true, opacity: 0.3 })));
+
+      // --- Coordinate mapping ---
+      function mapLM(lm) {
+        const vw = videoEl.videoWidth || 1280, vh = videoEl.videoHeight || 720;
+        const vidA = vw / vh, vpA = innerWidth / innerHeight;
+        let sx, sy, ox = 0, oy = 0;
+        if (vidA > vpA) { sy = 1; sx = vpA / vidA; ox = (1 - sx) / 2; }
+        else { sx = 1; sy = vidA / vpA; oy = (1 - sy) / 2; }
+        const vx = (lm.x - ox) / sx, vy = (lm.y - oy) / sy;
+        return { x: ((1 - vx) * 2 - 1) * vpA, y: 1 - 2 * vy };
+      }
+
+      function spawn(x, y, col, n) {
+        for (let i = 0; i < n && pool.length < MAX_P; i++) {
+          pool.push({
+            x, y, z: Math.random() * 0.08,
+            vx: (Math.random() - 0.5) * 0.018,
+            vy: (Math.random() - 0.5) * 0.018,
+            vz: (Math.random() - 0.5) * 0.004,
+            life: 0.7 + Math.random() * 0.5,
+            r: col.r, g: col.g, b: col.b,
+            size: Math.random() * 5 + 1.5
+          });
+        }
+      }
+
+      // --- Start / Stop ---
+      async function start() {
+        active = true;
+        document.getElementById('handLoading').style.display = 'flex';
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
+          });
+          videoEl.srcObject = stream;
+          await videoEl.play();
+          videoEl.style.display = 'block';
+
+          if (!handLandmarker) {
+            const v = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
+            const resolver = await v.FilesetResolver.forVisionTasks(
+              'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+            );
+            handLandmarker = await v.HandLandmarker.createFromOptions(resolver, {
+              baseOptions: {
+                modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task',
+                delegate: 'GPU'
+              },
+              runningMode: 'VIDEO',
+              numHands: 2
+            });
+          }
+        } catch (err) {
+          console.error('Hand tracking init error:', err);
+        }
+        document.getElementById('handLoading').style.display = 'none';
+      }
+
+      function stop() {
+        active = false;
+        if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+        videoEl.style.display = 'none';
+        videoEl.srcObject = null;
+        results = null;
+        pool.length = 0;
+        glowGeo.setDrawRange(0, 0);
+        skelGeo.setDrawRange(0, 0);
+        pGeo.setDrawRange(0, 0);
+      }
+
+      return {
+        scene, camera: cam,
+        needsControls: false,
+        start, stop,
+        update(t) {
+          if (!active) return;
+
+          const now = performance.now();
+          if (handLandmarker && videoEl.readyState >= 2 && now - lastDetect > 33) {
+            lastDetect = now;
+            try { results = handLandmarker.detectForVideo(videoEl, now); } catch(e) {}
+          }
+
+          let gc = 0, sc = 0;
+          if (results && results.landmarks) {
+            for (const hand of results.landmarks) {
+              for (let f = 0; f < 5; f++) {
+                const p = mapLM(hand[TIPS[f]]);
+                spawn(p.x, p.y, FCOL[f], 3);
+                const g3 = gc * 3;
+                glowPos[g3] = p.x; glowPos[g3+1] = p.y; glowPos[g3+2] = 0.05;
+                glowCol[g3] = FCOL[f].r; glowCol[g3+1] = FCOL[f].g; glowCol[g3+2] = FCOL[f].b;
+                glowSiz[gc] = 14;
+                gc++;
+              }
+              for (const [a, b] of CONNS) {
+                const pa = mapLM(hand[a]), pb = mapLM(hand[b]);
+                const s = sc * 6;
+                skelPos[s]=pa.x; skelPos[s+1]=pa.y; skelPos[s+2]=0;
+                skelPos[s+3]=pb.x; skelPos[s+4]=pb.y; skelPos[s+5]=0;
+                sc++;
+              }
+              // Pinch burst
+              const th = hand[4], ix = hand[8];
+              if (Math.hypot(th.x-ix.x, th.y-ix.y) < 0.055) {
+                const mid = mapLM({ x:(th.x+ix.x)/2, y:(th.y+ix.y)/2 });
+                for (let i = 0; i < 18 && pool.length < MAX_P; i++) {
+                  const ang = Math.random()*Math.PI*2, spd = Math.random()*0.05+0.01;
+                  const c = FCOL[Math.floor(Math.random()*5)];
+                  pool.push({ x:mid.x,y:mid.y,z:0,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,
+                    vz:(Math.random()-0.5)*0.02,life:1.3,r:c.r,g:c.g,b:c.b,size:Math.random()*8+3 });
+                }
+              }
+            }
+          }
+          glowGeo.setDrawRange(0, gc);
+          glowGeo.attributes.position.needsUpdate = true;
+          glowGeo.attributes.color.needsUpdate = true;
+          glowGeo.attributes.aSize.needsUpdate = true;
+          skelGeo.setDrawRange(0, sc * 2);
+          skelGeo.attributes.position.needsUpdate = true;
+
+          // Update particles
+          let alive = 0;
+          for (let i = 0; i < pool.length; i++) {
+            const p = pool[i];
+            p.life -= 0.018;
+            if (p.life <= 0) continue;
+            p.x += p.vx; p.y += p.vy; p.z += p.vz;
+            p.vy -= 0.00025;
+            const a3 = alive * 3;
+            pPos[a3]=p.x; pPos[a3+1]=p.y; pPos[a3+2]=p.z;
+            pCol[a3]=p.r; pCol[a3+1]=p.g; pCol[a3+2]=p.b;
+            pSiz[alive] = p.size * Math.min(p.life, 1);
+            pool[alive] = p;
+            alive++;
+          }
+          pool.length = alive;
+          pGeo.setDrawRange(0, alive);
+          pGeo.attributes.position.needsUpdate = true;
+          pGeo.attributes.color.needsUpdate = true;
+          pGeo.attributes.aSize.needsUpdate = true;
+        },
+        resize(w, h) {
+          const a = w / h;
+          cam.left = -a; cam.right = a;
+          cam.updateProjectionMatrix();
+        }
+      };
+    }
+
+    // ============================================================
     //  UI HELPERS
     // ============================================================
     function updateInfoCard(name) {
@@ -810,6 +1100,9 @@
 
     function switchDemo(name) {
       if (name === currentName) return;
+
+      // Stop camera when leaving hands
+      if (currentName === 'hands' && currentDemo && currentDemo.stop) currentDemo.stop();
 
       // Fade out
       canvas.style.opacity = '0';
@@ -845,6 +1138,9 @@
         document.querySelectorAll('.tab').forEach(btn => {
           btn.classList.toggle('active', btn.dataset.demo === name);
         });
+
+        // Start camera when entering hands
+        if (name === 'hands' && currentDemo.start) currentDemo.start();
 
         // Fade in
         canvas.style.opacity = '1';
@@ -900,8 +1196,8 @@
 
     // Keyboard navigation
     document.addEventListener('keydown', e => {
-      const keys = ['1','2','3','4','5'];
-      const names = ['particles','blob','terrain','geometry','shader'];
+      const keys = ['1','2','3','4','5','6'];
+      const names = ['particles','blob','terrain','geometry','shader','hands'];
       const idx = keys.indexOf(e.key);
       if (idx !== -1) switchDemo(names[idx]);
     });
@@ -914,6 +1210,7 @@
     demos.terrain   = createTerrain();
     demos.geometry  = createGeometry();
     demos.shader    = createShader();
+    demos.hands     = createHandDemo();
 
     currentDemo = demos.particles;
     updateInfoCard('particles');
