@@ -859,85 +859,109 @@
       const videoEl = document.getElementById('handVideo');
       let handLandmarker = null, stream = null, active = false, results = null, lastDetect = 0;
 
-      // --- VideoTexture ---
       const videoTex = new THREE.VideoTexture(videoEl);
       videoTex.minFilter = THREE.LinearFilter;
 
-      function mapLM(lm) {
-        const vw = videoEl.videoWidth || 1280, vh = videoEl.videoHeight || 720, vidA = vw / vh, vpA = innerWidth / innerHeight;
-        let sx, sy, ox = 0, oy = 0;
-        if (vidA > vpA) { sy = 1; sx = vpA / vidA; ox = (1 - sx) / 2; } else { sx = 1; sy = vidA / vpA; oy = (1 - sy) / 2; }
-        return { x: ((1 - (lm.x - ox) / sx) * 2 - 1) * vpA, y: 1 - 2 * ((lm.y - oy) / sy) };
+      function mapLM(lm){
+        const vw=videoEl.videoWidth||1280,vh=videoEl.videoHeight||720,vidA=vw/vh,vpA=innerWidth/innerHeight;
+        let sx,sy,ox=0,oy=0;
+        if(vidA>vpA){sy=1;sx=vpA/vidA;ox=(1-sx)/2;}else{sx=1;sy=vidA/vpA;oy=(1-sy)/2;}
+        return{x:((1-(lm.x-ox)/sx)*2-1)*vpA,y:1-2*((lm.y-oy)/sy)};
       }
-      function videoCrop() {
-        const vw = videoEl.videoWidth || 1280, vh = videoEl.videoHeight || 720, vidA = vw / vh, vpA = innerWidth / innerHeight;
-        if (vidA > vpA) return { sx: vpA / vidA, sy: 1, ox: (1 - vpA / vidA) / 2, oy: 0 };
-        return { sx: 1, sy: vidA / vpA, ox: 0, oy: (1 - vidA / vpA) / 2 };
+      function videoCrop(){
+        const vw=videoEl.videoWidth||1280,vh=videoEl.videoHeight||720,vidA=vw/vh,vpA=innerWidth/innerHeight;
+        if(vidA>vpA)return{sx:vpA/vidA,sy:1,ox:(1-vpA/vidA)/2,oy:0};
+        return{sx:1,sy:vidA/vpA,ox:0,oy:(1-vidA/vpA)/2};
       }
-      function sortQuad(pts) {
-        const cx = (pts[0].x+pts[1].x+pts[2].x+pts[3].x)/4, cy = (pts[0].y+pts[1].y+pts[2].y+pts[3].y)/4;
-        pts.sort((a,b) => Math.atan2(a.y-cy,a.x-cx) - Math.atan2(b.y-cy,b.x-cx));
-        return pts;
+      function sortQuad(pts){
+        const cx=(pts[0].x+pts[1].x+pts[2].x+pts[3].x)/4,cy=(pts[0].y+pts[1].y+pts[2].y+pts[3].y)/4;
+        pts.sort((a,b)=>Math.atan2(a.y-cy,a.x-cx)-Math.atan2(b.y-cy,b.x-cx));return pts;
       }
 
-      // --- X-Ray quad ---
-      const quadPos = new Float32Array(12);
-      const quadGeo = new THREE.BufferGeometry();
-      quadGeo.setAttribute('position', new THREE.BufferAttribute(quadPos, 3));
-      quadGeo.setIndex([0,1,2,0,2,3]);
-      const xU = {
-        uVideoTex:{value:videoTex}, uResolution:{value:new THREE.Vector2(innerWidth,innerHeight)},
-        uTime:{value:0}, uCrop:{value:new THREE.Vector4(1,1,0,0)}
-      };
-      const quadMesh = new THREE.Mesh(quadGeo, new THREE.ShaderMaterial({
-        uniforms:xU, side:THREE.DoubleSide, depthTest:false, depthWrite:false,
-        vertexShader:`void main(){gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
-        fragmentShader:`
-          uniform sampler2D uVideoTex;uniform vec2 uResolution;uniform float uTime;uniform vec4 uCrop;
-          float luma(vec3 c){return dot(c,vec3(.299,.587,.114));}
-          void main(){
-            vec2 uv=gl_FragCoord.xy/uResolution;
-            vec2 vid=vec2((1.-uv.x)*uCrop.x+uCrop.z,uv.y*uCrop.y+uCrop.w);
-            vec2 tx=1.5/uResolution;
-            float tl=luma(texture2D(uVideoTex,vid+vec2(-tx.x,tx.y)).rgb);
-            float tc=luma(texture2D(uVideoTex,vid+vec2(0,tx.y)).rgb);
-            float tr=luma(texture2D(uVideoTex,vid+vec2(tx.x,tx.y)).rgb);
-            float ml=luma(texture2D(uVideoTex,vid+vec2(-tx.x,0)).rgb);
-            float mr=luma(texture2D(uVideoTex,vid+vec2(tx.x,0)).rgb);
-            float bl=luma(texture2D(uVideoTex,vid+vec2(-tx.x,-tx.y)).rgb);
-            float bc=luma(texture2D(uVideoTex,vid+vec2(0,-tx.y)).rgb);
-            float br=luma(texture2D(uVideoTex,vid+vec2(tx.x,-tx.y)).rgb);
-            float gx=-tl-2.*ml-bl+tr+2.*mr+br,gy=-tl-2.*tc-tr+bl+2.*bc+br;
-            float edge=sqrt(gx*gx+gy*gy);
-            vec3 base=texture2D(uVideoTex,vid).rgb;float l=luma(base);
-            vec3 col=vec3(l*.1)+vec3(.08,.95,.8)*edge*2.5;
-            col*=.88+.12*sin(gl_FragCoord.y*2.5);
-            col+=vec3(.04,.18,.14)*(1.-smoothstep(0.,.025,abs(uv.y-fract(uTime*.2))));
-            col+=fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233))+uTime)*43758.5)*.04;
-            gl_FragColor=vec4(col,1.);}`
+      const vertSh=`void main(){gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`;
+      const fragBase=`uniform sampler2D uVideoTex;uniform vec2 uResolution;uniform float uTime;uniform vec4 uCrop;
+        float luma(vec3 c){return dot(c,vec3(.299,.587,.114));}`;
+
+      // 4 effects: X-Ray, Thermal, Glitch, Neon
+      const frags=[
+        // 0: X-Ray — Sobel edges + cyan
+        fragBase+`void main(){vec2 uv=gl_FragCoord.xy/uResolution;
+          vec2 vid=vec2((1.-uv.x)*uCrop.x+uCrop.z,uv.y*uCrop.y+uCrop.w);vec2 tx=1.5/uResolution;
+          float tl=luma(texture2D(uVideoTex,vid+vec2(-tx.x,tx.y)).rgb),tc=luma(texture2D(uVideoTex,vid+vec2(0,tx.y)).rgb),
+          tr=luma(texture2D(uVideoTex,vid+vec2(tx.x,tx.y)).rgb),ml=luma(texture2D(uVideoTex,vid+vec2(-tx.x,0)).rgb),
+          mr=luma(texture2D(uVideoTex,vid+vec2(tx.x,0)).rgb),bl=luma(texture2D(uVideoTex,vid+vec2(-tx.x,-tx.y)).rgb),
+          bc=luma(texture2D(uVideoTex,vid+vec2(0,-tx.y)).rgb),br=luma(texture2D(uVideoTex,vid+vec2(tx.x,-tx.y)).rgb);
+          float gx=-tl-2.*ml-bl+tr+2.*mr+br,gy=-tl-2.*tc-tr+bl+2.*bc+br,edge=sqrt(gx*gx+gy*gy);
+          float l=luma(texture2D(uVideoTex,vid).rgb);
+          vec3 col=vec3(l*.08)+vec3(.08,.95,.8)*edge*2.2;
+          col*=.88+.12*sin(gl_FragCoord.y*2.5);
+          col+=vec3(.03,.15,.12)*(1.-smoothstep(0.,.025,abs(uv.y-fract(uTime*.2))));
+          gl_FragColor=vec4(col*.65,.75);}`,
+
+        // 1: Thermal — heat map
+        fragBase+`void main(){vec2 uv=gl_FragCoord.xy/uResolution;
+          vec2 vid=vec2((1.-uv.x)*uCrop.x+uCrop.z,uv.y*uCrop.y+uCrop.w);
+          float l=luma(texture2D(uVideoTex,vid).rgb);vec3 col;
+          if(l<.2)col=mix(vec3(0,0,.25),vec3(0,.1,.9),l*5.);
+          else if(l<.4)col=mix(vec3(0,.1,.9),vec3(0,.85,.2),(l-.2)*5.);
+          else if(l<.6)col=mix(vec3(0,.85,.2),vec3(.95,.95,0),(l-.4)*5.);
+          else if(l<.8)col=mix(vec3(.95,.95,0),vec3(.95,.3,0),(l-.6)*5.);
+          else col=mix(vec3(.95,.3,0),vec3(1,.1,.1),(l-.8)*5.);
+          col*=.9+.1*sin(gl_FragCoord.y*3.5);
+          gl_FragColor=vec4(col*.6,.75);}`,
+
+        // 2: Glitch — RGB split + block noise
+        fragBase+`void main(){vec2 uv=gl_FragCoord.xy/uResolution;
+          vec2 vid=vec2((1.-uv.x)*uCrop.x+uCrop.z,uv.y*uCrop.y+uCrop.w);
+          float shift=sin(uTime*4.+uv.y*25.)*.012+sin(uTime*11.+uv.y*80.)*.004;
+          vec3 col;col.r=texture2D(uVideoTex,vid+vec2(shift,0)).r;
+          col.g=texture2D(uVideoTex,vid).g;col.b=texture2D(uVideoTex,vid-vec2(shift,0)).b;
+          float block=step(.96,fract(sin(floor(uv.y*25.)+floor(uTime*8.))*43758.5));
+          col=mix(col,1.-col,block);
+          col+=fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233))+uTime*2.)*43758.5)*.06-.03;
+          col*=.9+.1*sin(gl_FragCoord.y*1.5+uTime*10.);
+          gl_FragColor=vec4(col*.65,.75);}`,
+
+        // 3: Neon — posterize + saturation boost + edge glow
+        fragBase+`void main(){vec2 uv=gl_FragCoord.xy/uResolution;
+          vec2 vid=vec2((1.-uv.x)*uCrop.x+uCrop.z,uv.y*uCrop.y+uCrop.w);vec2 tx=1.2/uResolution;
+          vec3 base=texture2D(uVideoTex,vid).rgb;float l=luma(base);
+          vec3 col=floor(base*5.)/5.;col=mix(vec3(l),col,2.5);col=max(col,0.);
+          float edge=abs(luma(texture2D(uVideoTex,vid+vec2(tx.x,0)).rgb)-luma(texture2D(uVideoTex,vid-vec2(tx.x,0)).rgb))
+            +abs(luma(texture2D(uVideoTex,vid+vec2(0,tx.y)).rgb)-luma(texture2D(uVideoTex,vid-vec2(0,tx.y)).rgb));
+          col+=vec3(.1,1.,.4)*edge*1.5;
+          gl_FragColor=vec4(col*.6,.75);}`
+      ];
+
+      // Finger pairs: [fingerA, fingerB] landmarks + border color
+      const PAIRS=[{a:4,b:8,col:0x00ffcc},{a:8,b:12,col:0xff6600},{a:12,b:16,col:0xff00ff},{a:16,b:20,col:0x00ff66}];
+
+      // Build 4 quads with borders
+      const quadData=PAIRS.map((p,i)=>{
+        const qP=new Float32Array(12),qG=new THREE.BufferGeometry();
+        qG.setAttribute('position',new THREE.BufferAttribute(qP,3));qG.setIndex([0,1,2,0,2,3]);
+        const u={uVideoTex:{value:videoTex},uResolution:{value:new THREE.Vector2(innerWidth,innerHeight)},
+          uTime:{value:0},uCrop:{value:new THREE.Vector4(1,1,0,0)}};
+        const m=new THREE.Mesh(qG,new THREE.ShaderMaterial({uniforms:u,side:THREE.DoubleSide,transparent:true,
+          depthTest:false,depthWrite:false,blending:THREE.AdditiveBlending,vertexShader:vertSh,fragmentShader:frags[i]}));
+        m.visible=false;m.renderOrder=1;scene.add(m);
+        const bP=new Float32Array(15),bG=new THREE.BufferGeometry();
+        bG.setAttribute('position',new THREE.BufferAttribute(bP,3));
+        const border=new THREE.Line(bG,new THREE.LineBasicMaterial({color:p.col,transparent:true,opacity:.85,blending:THREE.AdditiveBlending,depthTest:false}));
+        border.visible=false;border.renderOrder=2;scene.add(border);
+        return{qP,qG,mesh:m,bP,bG,border,u,pair:p};
+      });
+
+      // Corner dots — 10 fingertips max
+      const dotPos=new Float32Array(30),dotGeo=new THREE.BufferGeometry();
+      dotGeo.setAttribute('position',new THREE.BufferAttribute(dotPos,3));dotGeo.setDrawRange(0,0);
+      const dotPts=new THREE.Points(dotGeo,new THREE.ShaderMaterial({transparent:true,depthWrite:false,depthTest:false,
+        blending:THREE.AdditiveBlending,
+        vertexShader:`void main(){gl_PointSize=16.;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
+        fragmentShader:`void main(){float d=length(gl_PointCoord-.5);if(d>.5)discard;gl_FragColor=vec4(1.,1.,1.,(1.-smoothstep(0.,.5,d))*.7);}`
       }));
-      quadMesh.visible=false; quadMesh.renderOrder=1; scene.add(quadMesh);
+      dotPts.renderOrder=3;scene.add(dotPts);
 
-      // --- Border + glow ---
-      const bdrPos=new Float32Array(15),glwPos=new Float32Array(15);
-      const bdrGeo=new THREE.BufferGeometry();bdrGeo.setAttribute('position',new THREE.BufferAttribute(bdrPos,3));
-      const borderLine=new THREE.Line(bdrGeo,new THREE.LineBasicMaterial({color:0x00ffcc,transparent:true,opacity:.9,blending:THREE.AdditiveBlending,depthTest:false}));
-      borderLine.visible=false;borderLine.renderOrder=2;scene.add(borderLine);
-      const glwGeo=new THREE.BufferGeometry();glwGeo.setAttribute('position',new THREE.BufferAttribute(glwPos,3));
-      const glowLine=new THREE.Line(glwGeo,new THREE.LineBasicMaterial({color:0x00ffcc,transparent:true,opacity:.3,blending:THREE.AdditiveBlending,depthTest:false}));
-      glowLine.visible=false;glowLine.renderOrder=2;scene.add(glowLine);
-
-      // --- Corner dots ---
-      const cPos=new Float32Array(12),cGeo=new THREE.BufferGeometry();
-      cGeo.setAttribute('position',new THREE.BufferAttribute(cPos,3));cGeo.setDrawRange(0,0);
-      const cPts=new THREE.Points(cGeo,new THREE.ShaderMaterial({
-        transparent:true,depthWrite:false,depthTest:false,blending:THREE.AdditiveBlending,
-        vertexShader:`void main(){gl_PointSize=22.;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
-        fragmentShader:`void main(){float d=length(gl_PointCoord-.5);if(d>.5)discard;gl_FragColor=vec4(.1,1.,.85,(1.-smoothstep(0.,.5,d))*.9);}`
-      }));
-      cPts.renderOrder=3;scene.add(cPts);
-
-      // --- Start / Stop ---
       async function start(){
         active=true;document.getElementById('handLoading').style.display='flex';
         try{
@@ -954,7 +978,7 @@
       function stop(){
         active=false;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
         videoEl.style.display='none';videoEl.srcObject=null;results=null;
-        quadMesh.visible=false;borderLine.visible=false;glowLine.visible=false;cGeo.setDrawRange(0,0);
+        quadData.forEach(q=>{q.mesh.visible=false;q.border.visible=false;});dotGeo.setDrawRange(0,0);
       }
 
       return{
@@ -966,28 +990,37 @@
             lastDetect=now;try{results=handLandmarker.detectForVideo(videoEl,now);}catch(e){}
           }
           const hands=results&&results.landmarks?results.landmarks:[];
-          const rawPts=[];
-          for(let h=0;h<hands.length&&h<2;h++){rawPts.push(mapLM(hands[h][4]));rawPts.push(mapLM(hands[h][8]));}
+          const twoHands=hands.length>=2;
 
-          for(let i=0;i<rawPts.length&&i<4;i++){cPos[i*3]=rawPts[i].x;cPos[i*3+1]=rawPts[i].y;cPos[i*3+2]=.03;}
-          cGeo.setDrawRange(0,rawPts.length);cGeo.attributes.position.needsUpdate=true;
-
-          if(rawPts.length===4){
-            const s=sortQuad([...rawPts]);
-            for(let i=0;i<4;i++){quadPos[i*3]=s[i].x;quadPos[i*3+1]=s[i].y;quadPos[i*3+2]=0;}
-            quadGeo.attributes.position.needsUpdate=true;quadMesh.visible=true;
-            for(let i=0;i<4;i++){
-              bdrPos[i*3]=s[i].x;bdrPos[i*3+1]=s[i].y;bdrPos[i*3+2]=.02;
-              glwPos[i*3]=s[i].x;glwPos[i*3+1]=s[i].y;glwPos[i*3+2]=.015;
+          // Update fingertip dots
+          let di=0;
+          for(let h=0;h<hands.length&&h<2;h++){
+            for(const tip of[4,8,12,16,20]){
+              const p=mapLM(hands[h][tip]);
+              dotPos[di*3]=p.x;dotPos[di*3+1]=p.y;dotPos[di*3+2]=.03;di++;
             }
-            bdrPos[12]=s[0].x;bdrPos[13]=s[0].y;bdrPos[14]=.02;
-            glwPos[12]=s[0].x;glwPos[13]=s[0].y;glwPos[14]=.015;
-            bdrGeo.attributes.position.needsUpdate=true;glwGeo.attributes.position.needsUpdate=true;
-            borderLine.visible=true;glowLine.visible=true;
-            const cr=videoCrop();xU.uCrop.value.set(cr.sx,cr.sy,cr.ox,cr.oy);xU.uTime.value=t;
-          }else{quadMesh.visible=false;borderLine.visible=false;glowLine.visible=false;}
+          }
+          dotGeo.setDrawRange(0,di);dotGeo.attributes.position.needsUpdate=true;
+
+          // Update each quad
+          const crop=videoCrop();
+          for(const qd of quadData){
+            if(!twoHands){qd.mesh.visible=false;qd.border.visible=false;continue;}
+            const pts=[mapLM(hands[0][qd.pair.a]),mapLM(hands[0][qd.pair.b]),
+                       mapLM(hands[1][qd.pair.a]),mapLM(hands[1][qd.pair.b])];
+            const s=sortQuad(pts);
+            for(let i=0;i<4;i++){qd.qP[i*3]=s[i].x;qd.qP[i*3+1]=s[i].y;qd.qP[i*3+2]=0;}
+            qd.qG.attributes.position.needsUpdate=true;qd.mesh.visible=true;
+            for(let i=0;i<4;i++){qd.bP[i*3]=s[i].x;qd.bP[i*3+1]=s[i].y;qd.bP[i*3+2]=.02;}
+            qd.bP[12]=s[0].x;qd.bP[13]=s[0].y;qd.bP[14]=.02;
+            qd.bG.attributes.position.needsUpdate=true;qd.border.visible=true;
+            qd.u.uCrop.value.set(crop.sx,crop.sy,crop.ox,crop.oy);qd.u.uTime.value=t;
+          }
         },
-        resize(w,h){const a=w/h;cam.left=-a;cam.right=a;cam.updateProjectionMatrix();xU.uResolution.value.set(w,h);}
+        resize(w,h){
+          const a=w/h;cam.left=-a;cam.right=a;cam.updateProjectionMatrix();
+          quadData.forEach(q=>q.u.uResolution.value.set(w,h));
+        }
       };
     }
 
