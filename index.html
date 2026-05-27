@@ -855,8 +855,7 @@
       const TIPS = [4,8,12,16,20];
 
       // --- Pre-computed random data ---
-      const coreD = Array.from({length:60},()=>({a:Math.random()*6.28,r:Math.pow(Math.random(),.5)*.22,s:(7+Math.random()*5)*(Math.random()<.3?-1:1),sz:2.5+Math.random()*2}));
-      const edgeD = Array.from({length:35},()=>({a:Math.random()*6.28,s:(1.5+Math.random()*2.5)*(Math.random()<.3?-1:1),r:.85+Math.random()*.2,sz:1+Math.random()*1.5}));
+      const coreD = Array.from({length:90},()=>({a:Math.random()*6.28,r:Math.pow(Math.random(),.7)*.45,s:(4+Math.random()*4)*(Math.random()<.3?-1:1),sz:3.5+Math.random()*3}));
 
       // --- Finger trail history ---
       const TLEN = 22;
@@ -911,59 +910,60 @@
       // --- RASENGAN RENDERER ---
       function writeRas(cx,cy,size,op,time,idx){
         rasColor(op);
-        const pulse=1+Math.sin(time*7)*.04;
+        // Strong visible pulse — breathing
+        const pulse=1+Math.sin(time*2.8)*.14+Math.sin(time*7)*.04;
         const sz=size*pulse;
+        // Organic drift — center wanders slightly
+        const dx=Math.sin(time*1.3)*.015*sz+Math.sin(time*3.7)*.008*sz;
+        const dy=Math.cos(time*1.7)*.015*sz+Math.cos(time*4.1)*.008*sz;
+        const ocx=cx+dx, ocy=cy+dy;
 
-        // 1) GLOW — 4 large soft particles
-        for(let i=0;i<4&&idx<MAX_P;i++){
+        // 1) GLOW — big soft aura
+        for(let i=0;i<3&&idx<MAX_P;i++){
           const i3=idx*3;
-          pPos[i3]=cx+(Math.sin(i*1.57+time)*.01*sz);pPos[i3+1]=cy+(Math.cos(i*1.57+time)*.01*sz);pPos[i3+2]=-.05;
+          pPos[i3]=ocx;pPos[i3+1]=ocy;pPos[i3+2]=-.06;
           pCol[i3]=glowC.r;pCol[i3+1]=glowC.g;pCol[i3+2]=glowC.b;
-          pSiz[idx]=(28+i*8)*sz; idx++;
+          pSiz[idx]=(40+i*12)*sz; idx++;
         }
 
-        // 2) CORE — 60 dense fast-spinning white-hot particles
-        for(let i=0;i<60&&idx<MAX_P;i++){
+        // 2) CORE — 90 dense particles, BIG radius, fills the sphere solidly
+        for(let i=0;i<90&&idx<MAX_P;i++){
           const c=coreD[i],a=c.a+time*c.s,r=c.r*sz;
           const i3=idx*3;
-          pPos[i3]=cx+Math.cos(a)*r;pPos[i3+1]=cy+Math.sin(a)*r;pPos[i3+2]=Math.sin(a*2)*.03*sz;
-          pCol[i3]=coreC.r;pCol[i3+1]=coreC.g;pCol[i3+2]=coreC.b;
-          pSiz[idx]=c.sz*(.4+sz*.5); idx++;
+          pPos[i3]=ocx+Math.cos(a)*r;pPos[i3+1]=ocy+Math.sin(a)*r;pPos[i3+2]=Math.sin(a*2+c.a)*.04*sz;
+          // Mix core white with main color based on distance from center
+          const cMix=c.r/.45;
+          pCol[i3]=coreC.r*(1-cMix*.3)+tmpC.r*cMix*.3;
+          pCol[i3+1]=coreC.g*(1-cMix*.3)+tmpC.g*cMix*.3;
+          pCol[i3+2]=coreC.b*(1-cMix*.3)+tmpC.b*cMix*.3;
+          pSiz[idx]=c.sz*(.5+sz*.6); idx++;
         }
 
-        // 3) SPIRAL BANDS — 5 arms × 80 particles = visible continuous swirls
-        const BANDS=5, PPB=80, TURNS=2.5, SPIN=8;
+        // 3) SPIRAL BANDS — 3 arms, organic wobble, fewer but thicker
+        const BANDS=3,PPB=55,TURNS=2,SPIN=5;
         for(let b=0;b<BANDS;b++){
-          const bOff=b*6.28/BANDS;
+          const bOff=b*6.28/BANDS+Math.sin(time*.7+b)*0.3;
           for(let i=0;i<PPB&&idx<MAX_P;i++){
             const t=i/PPB;
-            const r=t*sz;
+            const r=(.15+t*.85)*sz;
             const angle=bOff+t*TURNS*6.28+time*SPIN;
-            const wobble=Math.sin(t*12+time*4+b)*sz*.025;
+            const wobble=Math.sin(t*8+time*2.5+b*2)*.04*sz+Math.sin(t*15+time*5)*.015*sz;
             const i3=idx*3;
-            pPos[i3]=cx+Math.cos(angle)*(r+wobble);
-            pPos[i3+1]=cy+Math.sin(angle)*(r+wobble);
-            pPos[i3+2]=Math.sin(angle*2+t*5)*sz*.06;
-            pCol[i3]=tmpC.r;pCol[i3+1]=tmpC.g;pCol[i3+2]=tmpC.b;
-            pSiz[idx]=(1.8+(1-t)*3)*(.3+sz*.55); idx++;
+            pPos[i3]=ocx+Math.cos(angle)*(r+wobble);
+            pPos[i3+1]=ocy+Math.sin(angle)*(r+wobble);
+            pPos[i3+2]=Math.sin(angle*1.5+t*3)*sz*.05;
+            const fade=.5+.5*Math.sin(t*6+time*3+b);
+            pCol[i3]=tmpC.r*(.6+fade*.4);pCol[i3+1]=tmpC.g*(.6+fade*.4);pCol[i3+2]=tmpC.b*(.6+fade*.4);
+            pSiz[idx]=(2+(1-t)*2.5)*(.3+sz*.5); idx++;
           }
         }
 
-        // 4) EDGE WISPS — 35 slow particles at the boundary
-        for(let i=0;i<35&&idx<MAX_P;i++){
-          const e=edgeD[i],a=e.a+time*e.s,r=e.r*sz;
-          const i3=idx*3;
-          pPos[i3]=cx+Math.cos(a)*r;pPos[i3+1]=cy+Math.sin(a)*r;pPos[i3+2]=0;
-          pCol[i3]=tmpC.r*.5;pCol[i3+1]=tmpC.g*.5;pCol[i3+2]=tmpC.b*.5;
-          pSiz[idx]=e.sz*(.3+sz*.4); idx++;
-        }
-
-        // 5) SPARKS flying off
-        if(Math.random()<.5){
+        // 4) Sparse edge sparks — just a few, not cluttery
+        if(Math.random()<.3){
           const a=Math.random()*6.28;
-          sparks.push({x:cx+Math.cos(a)*sz*.95,y:cy+Math.sin(a)*sz*.95,z:0,
-            vx:Math.cos(a)*.025,vy:Math.sin(a)*.025,vz:0,
-            life:.5+Math.random()*.2,r:tmpC.r,g:tmpC.g,b:tmpC.b,size:2+Math.random()*3});
+          sparks.push({x:ocx+Math.cos(a)*sz*.9,y:ocy+Math.sin(a)*sz*.9,z:0,
+            vx:Math.cos(a)*.02,vy:Math.sin(a)*.02,vz:0,
+            life:.4+Math.random()*.2,r:tmpC.r,g:tmpC.g,b:tmpC.b,size:1.5+Math.random()*2});
         }
         return idx;
       }
@@ -1047,7 +1047,7 @@
             const op=handOpenness(h);
             smoothOpen[i]+=(op-smoothOpen[i])*.15;
             const m=mapLM(smoothPalms[i]);
-            return{cx:m.x,cy:m.y,open:smoothOpen[i],size:.15+smoothOpen[i]*.55};
+            return{cx:m.x,cy:m.y,open:smoothOpen[i],size:.3+smoothOpen[i]*.8};
           });
 
           // --- Merge ---
