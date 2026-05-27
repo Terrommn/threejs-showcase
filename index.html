@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Interactive 3D Experiences | WebGL Showcase</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #06060f;
+      color: #fff;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      overflow: hidden;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    /* ===== HEADER ===== */
+    header {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 100;
+      background: rgba(6, 6, 15, 0.82);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .header-brand {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 18px 24px 6px;
+    }
+
+    .logo {
+      font-size: 18px;
+      background: linear-gradient(135deg, #6366f1, #a855f7);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .header-brand h1 {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 4px;
+      color: rgba(255,255,255,0.85);
+    }
+
+    .header-nav {
+      display: flex;
+      justify-content: center;
+      gap: 2px;
+      padding: 0 16px 0;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .header-nav::-webkit-scrollbar { display: none; }
+
+    .tab {
+      background: none;
+      border: none;
+      color: rgba(255,255,255,0.35);
+      padding: 14px 18px 14px;
+      cursor: pointer;
+      font-family: 'Inter', sans-serif;
+      font-size: 11.5px;
+      font-weight: 500;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      position: relative;
+      transition: color 0.3s ease;
+      white-space: nowrap;
+    }
+
+    .tab:hover { color: rgba(255,255,255,0.65); }
+    .tab.active { color: #fff; }
+
+    .tab.active::after {
+      content: '';
+      position: absolute;
+      bottom: 0; left: 25%; right: 25%;
+      height: 2px;
+      background: linear-gradient(90deg, #6366f1, #a855f7);
+      border-radius: 2px;
+    }
+
+    .tab-num {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      margin-right: 6px;
+      opacity: 0.45;
+    }
+
+    /* ===== CANVAS ===== */
+    #canvas {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      display: block;
+      transition: opacity 0.35s ease;
+    }
+
+    /* ===== INFO CARD ===== */
+    .info-card {
+      position: fixed;
+      bottom: 32px; left: 32px;
+      max-width: 400px;
+      padding: 24px 28px;
+      background: rgba(255,255,255,0.03);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 16px;
+      z-index: 50;
+      opacity: 0;
+      transform: translateY(16px);
+      animation: cardIn 0.6s ease-out 0.3s forwards;
+    }
+
+    .info-card .tag {
+      display: inline-block;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: #a78bfa;
+      background: rgba(167,139,250,0.1);
+      padding: 4px 10px;
+      border-radius: 6px;
+      margin-bottom: 12px;
+    }
+
+    .info-card h2 {
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      letter-spacing: -0.3px;
+    }
+
+    .info-card p {
+      font-size: 13px;
+      font-weight: 400;
+      line-height: 1.65;
+      color: rgba(255,255,255,0.5);
+    }
+
+    .info-card .hint {
+      display: block;
+      font-size: 11px;
+      color: rgba(255,255,255,0.25);
+      margin-top: 14px;
+      font-style: italic;
+    }
+
+    @keyframes cardIn {
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ===== FPS BADGE ===== */
+    .fps {
+      position: fixed;
+      top: 90px; right: 20px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      color: rgba(255,255,255,0.25);
+      z-index: 50;
+    }
+
+    /* ===== RESPONSIVE ===== */
+    @media (max-width: 768px) {
+      .header-brand { padding: 12px 16px 4px; }
+      .header-brand h1 { font-size: 11px; letter-spacing: 3px; }
+      .header-nav { gap: 0; padding: 0 8px; }
+      .tab { padding: 12px 10px; font-size: 10px; letter-spacing: 0.8px; }
+      .tab-num { display: none; }
+      .info-card { bottom: 16px; left: 16px; right: 16px; max-width: none; padding: 18px 20px; }
+      .info-card h2 { font-size: 17px; }
+      .fps { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="header-brand">
+      <span class="logo">&#9670;</span>
+      <h1>INTERACTIVE 3D EXPERIENCES</h1>
+    </div>
+    <nav class="header-nav" id="navTabs">
+      <button class="tab active" data-demo="particles"><span class="tab-num">01</span>Cosmic Particles</button>
+      <button class="tab" data-demo="blob"><span class="tab-num">02</span>Liquid Metal</button>
+      <button class="tab" data-demo="terrain"><span class="tab-num">03</span>Digital Terrain</button>
+      <button class="tab" data-demo="geometry"><span class="tab-num">04</span>Crystal Objects</button>
+      <button class="tab" data-demo="shader"><span class="tab-num">05</span>Neon Flow</button>
+    </nav>
+  </header>
+
+  <canvas id="canvas"></canvas>
+
+  <div class="info-card" id="infoCard">
+    <span class="tag" id="infoTag"></span>
+    <h2 id="infoTitle"></h2>
+    <p id="infoDesc"></p>
+    <span class="hint" id="infoHint"></span>
+  </div>
+
+  <div class="fps" id="fpsCounter"></div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // ============================================================
+    //  CONFIG
+    // ============================================================
+    const DEMO_META = {
+      particles: {
+        title: 'Cosmic Particles',
+        desc: '50,000 particles forming a dynamic spiral galaxy with real-time color interpolation, additive blending, and depth-based point sizing.',
+        tag: 'Particle Systems',
+        hint: 'Move your mouse to shift the viewpoint'
+      },
+      blob: {
+        title: 'Liquid Metal',
+        desc: 'Procedural mesh deformation driven by multi-octave 3D simplex noise with iridescent Fresnel shading and dynamic specular highlights.',
+        tag: 'Custom Shaders',
+        hint: 'Click & drag to orbit \u2022 Scroll to zoom'
+      },
+      terrain: {
+        title: 'Digital Terrain',
+        desc: 'Real-time terrain generation using layered sine-wave vertex displacement with height-mapped colors and auto-computed normals.',
+        tag: 'Vertex Animation',
+        hint: 'Click & drag to orbit \u2022 Scroll to zoom'
+      },
+      geometry: {
+        title: 'Crystal Objects',
+        desc: 'PBR metallic materials on iconic geometries lit by orbiting colored point lights, creating dynamic reflections and color mixing.',
+        tag: 'PBR Materials',
+        hint: 'Click & drag to orbit \u2022 Scroll to zoom'
+      },
+      shader: {
+        title: 'Neon Flow',
+        desc: 'GPU-accelerated generative art built entirely in a GLSL fragment shader, producing flowing luminous curves that react to the cursor.',
+        tag: 'Fragment Shaders',
+        hint: 'Move your mouse to interact'
+      }
+    };
+
+    // ============================================================
+    //  GLSL SIMPLEX NOISE (Stefan Gustavson)
+    // ============================================================
+    const NOISE_GLSL = `
+      vec3 mod289(vec3 x){return x-floor(x*(1.0/289.0))*289.0;}
+      vec4 mod289(vec4 x){return x-floor(x*(1.0/289.0))*289.0;}
+      vec4 permute(vec4 x){return mod289(((x*34.0)+10.0)*x);}
+      vec4 taylorInvSqrt(vec4 r){return 1.79284291400159-0.85373472095314*r;}
+
+      float snoise(vec3 v){
+        const vec2 C=vec2(1.0/6.0,1.0/3.0);
+        const vec4 D=vec4(0.0,0.5,1.0,2.0);
+        vec3 i=floor(v+dot(v,C.yyy));
+        vec3 x0=v-i+dot(i,C.xxx);
+        vec3 g=step(x0.yzx,x0.xyz);
+        vec3 l=1.0-g;
+        vec3 i1=min(g.xyz,l.zxy);
+        vec3 i2=max(g.xyz,l.zxy);
+        vec3 x1=x0-i1+C.xxx;
+        vec3 x2=x0-i2+C.yyy;
+        vec3 x3=x0-D.yyy;
+        i=mod289(i);
+        vec4 p=permute(permute(permute(
+          i.z+vec4(0.0,i1.z,i2.z,1.0))
+          +i.y+vec4(0.0,i1.y,i2.y,1.0))
+          +i.x+vec4(0.0,i1.x,i2.x,1.0));
+        float n_=1.0/7.0;
+        vec3 ns=n_*D.wyz-D.xzx;
+        vec4 j=p-49.0*floor(p*ns.z*ns.z);
+        vec4 x_=floor(j*ns.z);
+        vec4 y_=floor(j-7.0*x_);
+        vec4 x2_=x_*ns.x+ns.yyyy;
+        vec4 y2_=y_*ns.x+ns.yyyy;
+        vec4 h=1.0-abs(x2_)-abs(y2_);
+        vec4 b0=vec4(x2_.xy,y2_.xy);
+        vec4 b1=vec4(x2_.zw,y2_.zw);
+        vec4 s0=floor(b0)*2.0+1.0;
+        vec4 s1=floor(b1)*2.0+1.0;
+        vec4 sh=-step(h,vec4(0.0));
+        vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy;
+        vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;
+        vec3 p0=vec3(a0.xy,h.x);
+        vec3 p1=vec3(a0.zw,h.y);
+        vec3 p2=vec3(a1.xy,h.z);
+        vec3 p3=vec3(a1.zw,h.w);
+        vec4 norm=taylorInvSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));
+        p0*=norm.x;p1*=norm.y;p2*=norm.z;p3*=norm.w;
+        vec4 m=max(0.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.0);
+        m=m*m;
+        return 42.0*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));
+      }
+    `;
+
+    // ============================================================
+    //  GLOBALS
+    // ============================================================
+    const canvas = document.getElementById('canvas');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+
+    const demos = {};
+    let currentName = 'particles';
+    let currentDemo = null;
+    let activeControls = null;
+    const mouse = { x: 0, y: 0 };
+
+    // FPS counter
+    let fpsFrames = 0, fpsLast = performance.now();
+    const fpsEl = document.getElementById('fpsCounter');
+
+    // ============================================================
+    //  DEMO 1 — COSMIC PARTICLES
+    // ============================================================
+    function createParticles() {
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x06060f);
+
+      const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 100);
+      camera.position.set(0, 2.5, 5.5);
+
+      const COUNT = 55000;
+      const positions = new Float32Array(COUNT * 3);
+      const colors    = new Float32Array(COUNT * 3);
+      const sizes     = new Float32Array(COUNT);
+
+      const cInner = new THREE.Color('#ff6030');
+      const cOuter = new THREE.Color('#1b3984');
+      const tmp    = new THREE.Color();
+
+      const BRANCHES = 4;
+      for (let i = 0; i < COUNT; i++) {
+        const i3 = i * 3;
+        const r  = Math.random() * 5.5;
+        const spin   = r * 3;
+        const branch = (i % BRANCHES) * (Math.PI * 2 / BRANCHES);
+        const spread = (5.5 - r) / 5.5;
+
+        const rx = Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.6 * spread;
+        const ry = Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.25;
+        const rz = Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.6 * spread;
+
+        positions[i3]     = Math.cos(branch + spin) * r + rx;
+        positions[i3 + 1] = ry;
+        positions[i3 + 2] = Math.sin(branch + spin) * r + rz;
+
+        tmp.copy(cInner).lerp(cOuter, r / 5.5);
+        colors[i3] = tmp.r; colors[i3+1] = tmp.g; colors[i3+2] = tmp.b;
+        sizes[i] = Math.random() * 1.8 + 0.4;
+      }
+
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geo.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
+      geo.setAttribute('aSize',    new THREE.BufferAttribute(sizes, 1));
+
+      const mat = new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        vertexShader: `
+          attribute float aSize;
+          attribute vec3 color;
+          varying vec3 vColor;
+          void main(){
+            vColor = color;
+            vec4 mv = modelViewMatrix * vec4(position,1.0);
+            gl_PointSize = aSize * (220.0 / -mv.z);
+            gl_Position = projectionMatrix * mv;
+          }
+        `,
+        fragmentShader: `
+          varying vec3 vColor;
+          void main(){
+            float d = length(gl_PointCoord - 0.5);
+            if(d > 0.5) discard;
+            float a = 1.0 - smoothstep(0.05, 0.5, d);
+            gl_FragColor = vec4(vColor, a * 0.65);
+          }
+        `
+      });
+
+      const points = new THREE.Points(geo, mat);
+      scene.add(points);
+
+      return {
+        scene, camera,
+        needsControls: false,
+        update(t) {
+          points.rotation.y = t * 0.06;
+          camera.position.x = Math.sin(mouse.x * 0.4) * 2.5;
+          camera.position.y = 2.5 + mouse.y * 1.0;
+          camera.lookAt(0, 0, 0);
+        },
+        resize(w, h) { camera.aspect = w / h; camera.updateProjectionMatrix(); }
+      };
+    }
+
+    // ============================================================
+    //  DEMO 2 — LIQUID METAL
+    // ============================================================
+    function createBlob() {
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x06060f);
+
+      const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
+      camera.position.set(0, 0, 4.5);
+
+      scene.add(new THREE.AmbientLight(0x222233, 1));
+      const dLight = new THREE.DirectionalLight(0xffffff, 2);
+      dLight.position.set(3, 4, 5);
+      scene.add(dLight);
+      const pLight = new THREE.PointLight(0x6366f1, 30, 20);
+      pLight.position.set(-3, 2, 3);
+      scene.add(pLight);
+
+      const geo = new THREE.IcosahedronGeometry(1.6, 5);
+
+      const mat = new THREE.ShaderMaterial({
+        extensions: { derivatives: true },
+        uniforms: { uTime: { value: 0 } },
+        vertexShader: NOISE_GLSL + `
+          uniform float uTime;
+          varying vec3 vWorldPos;
+          varying vec3 vNorm;
+          void main(){
+            float n = snoise(normal * 1.8 + uTime * 0.35) * 0.35;
+            n += snoise(normal * 3.6 + uTime * 0.25) * 0.18;
+            n += snoise(normal * 7.0 + uTime * 0.15) * 0.08;
+            vec3 pos = position + normal * n;
+            vWorldPos = (modelMatrix * vec4(pos,1.0)).xyz;
+            vNorm = normalMatrix * normal;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(pos,1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform float uTime;
+          varying vec3 vWorldPos;
+          varying vec3 vNorm;
+          void main(){
+            vec3 N = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
+            vec3 V = normalize(cameraPosition - vWorldPos);
+            float fresnel = pow(1.0 - abs(dot(V, N)), 3.0);
+
+            vec3 c1 = vec3(0.15, 0.35, 1.0);
+            vec3 c2 = vec3(1.0, 0.2, 0.55);
+            vec3 c3 = vec3(0.2, 1.0, 0.6);
+            float angle = dot(V, N);
+            vec3 iri = mix(c1, c2, fresnel);
+            iri = mix(iri, c3, sin(angle * 3.14 + uTime * 0.8) * 0.5 + 0.5);
+
+            vec3 L = normalize(vec3(3.0, 4.0, 5.0));
+            float diff = max(dot(N, L), 0.0);
+            vec3 H = normalize(L + V);
+            float spec = pow(max(dot(N, H), 0.0), 80.0);
+
+            vec3 col = iri * (0.28 + diff * 0.55) + vec3(1.0) * spec * 0.9 + iri * fresnel * 0.45;
+            gl_FragColor = vec4(col, 1.0);
+          }
+        `
+      });
+
+      const mesh = new THREE.Mesh(geo, mat);
+      scene.add(mesh);
+
+      return {
+        scene, camera,
+        needsControls: true, autoRotate: true,
+        controlsCfg: { target: [0,0,0], minDist: 3, maxDist: 8 },
+        update(t) {
+          mat.uniforms.uTime.value = t;
+          mesh.rotation.y = t * 0.08;
+        },
+        resize(w, h) { camera.aspect = w / h; camera.updateProjectionMatrix(); }
+      };
+    }
+
+    // ============================================================
+    //  DEMO 3 — DIGITAL TERRAIN
+    // ============================================================
+    function createTerrain() {
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x040410);
+      scene.fog = new THREE.FogExp2(0x040410, 0.045);
+
+      const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 100);
+      camera.position.set(0, 6, 12);
+
+      const SEG = 140;
+      const geo = new THREE.PlaneGeometry(24, 24, SEG, SEG);
+      geo.rotateX(-Math.PI / 2);
+
+      const colorArr = new Float32Array(geo.attributes.position.count * 3);
+      geo.setAttribute('color', new THREE.BufferAttribute(colorArr, 3));
+
+      const solidMat = new THREE.MeshBasicMaterial({ color: 0x060612, side: THREE.DoubleSide });
+      const wireMat  = new THREE.MeshBasicMaterial({ vertexColors: true, wireframe: true, transparent: true, opacity: 0.75 });
+
+      const solidMesh = new THREE.Mesh(geo, solidMat);
+      const wireMesh  = new THREE.Mesh(geo, wireMat);
+      scene.add(solidMesh);
+      scene.add(wireMesh);
+
+      const tmpC = new THREE.Color();
+      const posArr = geo.attributes.position.array;
+
+      return {
+        scene, camera,
+        needsControls: true, autoRotate: true,
+        controlsCfg: { target: [0,0,0], minDist: 6, maxDist: 25 },
+        update(t) {
+          for (let i = 0; i < geo.attributes.position.count; i++) {
+            const i3 = i * 3;
+            const x = posArr[i3];
+            const z = posArr[i3 + 2];
+
+            const y = Math.sin(x * 0.35 + t * 0.45) * Math.cos(z * 0.28 + t * 0.32) * 2.2
+                    + Math.sin(x * 0.7 + z * 0.5 + t * 0.18) * 0.9
+                    + Math.cos(x * 1.1 + t * 0.35) * Math.sin(z * 0.85 + t * 0.12) * 0.5;
+
+            posArr[i3 + 1] = y;
+
+            const ny = (y + 3.6) / 7.2;
+            tmpC.setHSL(0.62 - ny * 0.2, 0.85, 0.18 + ny * 0.38);
+            colorArr[i3] = tmpC.r; colorArr[i3+1] = tmpC.g; colorArr[i3+2] = tmpC.b;
+          }
+          geo.attributes.position.needsUpdate = true;
+          geo.attributes.color.needsUpdate = true;
+          geo.computeVertexNormals();
+        },
+        resize(w, h) { camera.aspect = w / h; camera.updateProjectionMatrix(); }
+      };
+    }
+
+    // ============================================================
+    //  DEMO 4 — CRYSTAL OBJECTS
+    // ============================================================
+    function createGeometry() {
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x06060f);
+
+      const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100);
+      camera.position.set(0, 1.5, 7);
+
+      scene.add(new THREE.AmbientLight(0x222233, 0.6));
+
+      const lights = [
+        new THREE.PointLight(0xff4466, 120, 25),
+        new THREE.PointLight(0x4488ff, 120, 25),
+        new THREE.PointLight(0x44ffaa, 80,  25)
+      ];
+      lights.forEach(l => scene.add(l));
+
+      const geos = [
+        new THREE.TorusKnotGeometry(0.9, 0.32, 128, 24),
+        new THREE.OctahedronGeometry(0.8, 0),
+        new THREE.DodecahedronGeometry(0.75, 0),
+        new THREE.TorusGeometry(0.7, 0.28, 20, 60),
+        new THREE.IcosahedronGeometry(0.7, 0),
+        new THREE.ConeGeometry(0.6, 1.2, 6),
+        new THREE.TetrahedronGeometry(0.7, 0)
+      ];
+
+      const colors = [0xaaaaff, 0xff88aa, 0x88ffcc, 0xffcc66, 0xcc88ff, 0x66ccff, 0xff9966];
+
+      const placements = [
+        [0,    0,    0],
+        [3.2,  0.8, -1],
+        [-3.0, -0.4, 1.2],
+        [2.0, -1.2,  2.5],
+        [-2.2, 1.5, -2],
+        [-1.0, -1.8, 2.8],
+        [1.5,  2.0, -2.5]
+      ];
+
+      const meshes = geos.map((g, i) => {
+        const mat = new THREE.MeshStandardMaterial({
+          color: colors[i],
+          metalness: 0.82,
+          roughness: 0.15,
+          flatShading: i > 0
+        });
+        const m = new THREE.Mesh(g, mat);
+        m.position.set(...placements[i]);
+        m.userData = {
+          baseY: placements[i][1],
+          speed: 0.4 + Math.random() * 0.5,
+          phase: Math.random() * Math.PI * 2,
+          rotSpeed: new THREE.Vector3(
+            (Math.random() - 0.5) * 0.6,
+            (Math.random() - 0.5) * 0.6,
+            (Math.random() - 0.5) * 0.3
+          )
+        };
+        scene.add(m);
+        return m;
+      });
+
+      return {
+        scene, camera,
+        needsControls: true, autoRotate: true,
+        controlsCfg: { target: [0,0,0], minDist: 4, maxDist: 14 },
+        update(t) {
+          lights[0].position.set(Math.sin(t * 0.4) * 5, 3, Math.cos(t * 0.4) * 5);
+          lights[1].position.set(Math.cos(t * 0.35) * 5, -2, Math.sin(t * 0.35) * 5);
+          lights[2].position.set(Math.sin(t * 0.5) * 3, Math.cos(t * 0.5) * 4, Math.sin(t * 0.3) * 3);
+
+          meshes.forEach(m => {
+            const u = m.userData;
+            m.position.y = u.baseY + Math.sin(t * u.speed + u.phase) * 0.35;
+            m.rotation.x += u.rotSpeed.x * 0.008;
+            m.rotation.y += u.rotSpeed.y * 0.008;
+            m.rotation.z += u.rotSpeed.z * 0.008;
+          });
+        },
+        resize(w, h) { camera.aspect = w / h; camera.updateProjectionMatrix(); }
+      };
+    }
+
+    // ============================================================
+    //  DEMO 5 — NEON FLOW
+    // ============================================================
+    function createShader() {
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x000000);
+
+      const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+      const uniforms = {
+        uTime:       { value: 0 },
+        uResolution: { value: new THREE.Vector2(innerWidth, innerHeight) },
+        uMouse:      { value: new THREE.Vector2(0.5, 0.5) }
+      };
+
+      const geo = new THREE.PlaneGeometry(2, 2);
+      const mat = new THREE.ShaderMaterial({
+        uniforms,
+        vertexShader: `void main(){ gl_Position = vec4(position,1.0); }`,
+        fragmentShader: `
+          uniform float uTime;
+          uniform vec2 uResolution;
+          uniform vec2 uMouse;
+
+          void main(){
+            vec2 uv = (gl_FragCoord.xy * 2.0 - uResolution) / min(uResolution.x, uResolution.y);
+
+            float t = uTime * 0.28;
+            vec2 mOff = (uMouse - 0.5) * 0.6;
+
+            vec3 col = vec3(0.0);
+
+            for(float i = 1.0; i <= 6.0; i++){
+              vec2 q = uv * (0.8 + i * 0.25) + mOff * i * 0.12;
+              q += vec2(
+                sin(q.y * 2.5 + t * (0.8 + i * 0.15) + i * 0.7),
+                cos(q.x * 2.5 + t * (0.7 + i * 0.1)  + i * 0.5)
+              ) * 0.55;
+
+              float d = abs(sin(q.x + q.y + t + i * 0.3) * 0.5 + 0.5);
+              d = pow(0.012 / d, 1.15);
+
+              col += d * vec3(
+                0.5 + 0.5 * cos(t + i * 0.9),
+                0.5 + 0.5 * cos(t + i * 0.9 + 2.1),
+                0.5 + 0.5 * cos(t + i * 0.9 + 4.2)
+              ) / (i * 0.65);
+            }
+
+            col = pow(col, vec3(0.9));
+            gl_FragColor = vec4(col, 1.0);
+          }
+        `
+      });
+
+      scene.add(new THREE.Mesh(geo, mat));
+
+      return {
+        scene, camera,
+        needsControls: false,
+        update(t) {
+          uniforms.uTime.value = t;
+          uniforms.uMouse.value.set(
+            (mouse.x + 1) * 0.5,
+            (mouse.y + 1) * 0.5
+          );
+        },
+        resize(w, h) {
+          uniforms.uResolution.value.set(w, h);
+        }
+      };
+    }
+
+    // ============================================================
+    //  UI HELPERS
+    // ============================================================
+    function updateInfoCard(name) {
+      const m = DEMO_META[name];
+      const card = document.getElementById('infoCard');
+      document.getElementById('infoTag').textContent   = m.tag;
+      document.getElementById('infoTitle').textContent  = m.title;
+      document.getElementById('infoDesc').textContent   = m.desc;
+      document.getElementById('infoHint').textContent   = m.hint;
+
+      // Retrigger animation
+      card.style.animation = 'none';
+      card.offsetHeight; // reflow
+      card.style.animation = 'cardIn 0.5s ease-out forwards';
+    }
+
+    function switchDemo(name) {
+      if (name === currentName) return;
+
+      // Fade out
+      canvas.style.opacity = '0';
+
+      setTimeout(() => {
+        // Dispose old controls
+        if (activeControls) { activeControls.dispose(); activeControls = null; }
+
+        currentName = name;
+        currentDemo = demos[name];
+
+        // Setup new controls
+        if (currentDemo.needsControls) {
+          activeControls = new OrbitControls(currentDemo.camera, canvas);
+          activeControls.enableDamping = true;
+          activeControls.dampingFactor = 0.06;
+          activeControls.enablePan = false;
+          if (currentDemo.controlsCfg) {
+            const c = currentDemo.controlsCfg;
+            activeControls.target.set(...c.target);
+            activeControls.minDistance = c.minDist;
+            activeControls.maxDistance = c.maxDist;
+          }
+          if (currentDemo.autoRotate) {
+            activeControls.autoRotate = true;
+            activeControls.autoRotateSpeed = 0.8;
+          }
+        }
+
+        updateInfoCard(name);
+
+        // Update tab UI
+        document.querySelectorAll('.tab').forEach(btn => {
+          btn.classList.toggle('active', btn.dataset.demo === name);
+        });
+
+        // Fade in
+        canvas.style.opacity = '1';
+      }, 350);
+    }
+
+    // ============================================================
+    //  ANIMATION LOOP
+    // ============================================================
+    function animate() {
+      requestAnimationFrame(animate);
+      const t = performance.now() * 0.001;
+
+      if (currentDemo) {
+        currentDemo.update(t);
+        if (activeControls) activeControls.update();
+        renderer.render(currentDemo.scene, currentDemo.camera);
+      }
+
+      // FPS
+      fpsFrames++;
+      if (t * 1000 - fpsLast > 500) {
+        fpsEl.textContent = Math.round(fpsFrames / ((t * 1000 - fpsLast) / 1000)) + ' FPS';
+        fpsFrames = 0; fpsLast = t * 1000;
+      }
+    }
+
+    // ============================================================
+    //  EVENTS
+    // ============================================================
+    window.addEventListener('resize', () => {
+      const w = innerWidth, h = innerHeight;
+      renderer.setSize(w, h);
+      Object.values(demos).forEach(d => d.resize(w, h));
+    });
+
+    window.addEventListener('mousemove', e => {
+      mouse.x = (e.clientX / innerWidth)  * 2 - 1;
+      mouse.y = (e.clientY / innerHeight) * 2 - 1;
+    });
+
+    window.addEventListener('touchmove', e => {
+      if (e.touches.length) {
+        mouse.x = (e.touches[0].clientX / innerWidth)  * 2 - 1;
+        mouse.y = (e.touches[0].clientY / innerHeight) * 2 - 1;
+      }
+    }, { passive: true });
+
+    document.getElementById('navTabs').addEventListener('click', e => {
+      const btn = e.target.closest('.tab');
+      if (btn && btn.dataset.demo) switchDemo(btn.dataset.demo);
+    });
+
+    // Keyboard navigation
+    document.addEventListener('keydown', e => {
+      const keys = ['1','2','3','4','5'];
+      const names = ['particles','blob','terrain','geometry','shader'];
+      const idx = keys.indexOf(e.key);
+      if (idx !== -1) switchDemo(names[idx]);
+    });
+
+    // ============================================================
+    //  INIT
+    // ============================================================
+    demos.particles = createParticles();
+    demos.blob      = createBlob();
+    demos.terrain   = createTerrain();
+    demos.geometry  = createGeometry();
+    demos.shader    = createShader();
+
+    currentDemo = demos.particles;
+    updateInfoCard('particles');
+    animate();
+  </script>
+</body>
+</html>
